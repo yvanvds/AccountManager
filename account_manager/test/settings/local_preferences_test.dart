@@ -117,102 +117,26 @@ void main() {
     });
   });
 
-  group('the ticket printer address (#406)', () {
-    test('an install that has never configured one does not print', () async {
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      expect(prefs.lateArrivalPrinterHost, isNull);
-    });
-
-    test('survives a restart of this machine', () async {
-      final first = LocalPreferences(FileLocalPreferenceStore(file));
-      await first.load();
-      await first.setLateArrivalPrinterHost('10.0.0.31');
-
-      final second = LocalPreferences(FileLocalPreferenceStore(file));
-      await second.load();
-      expect(second.lateArrivalPrinterHost, '10.0.0.31');
-    });
-
-    test('is trimmed, so a pasted address still resolves', () async {
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      await prefs.setLateArrivalPrinterHost('  printer-balie.local \n');
-      expect(prefs.lateArrivalPrinterHost, 'printer-balie.local');
-    });
-
-    test('a blank address switches printing off rather than storing ""',
+  group('the retired printer keys (#435)', () {
+    test('a stale printer address in an older file is carried, not read',
         () async {
-      // Empty is a state — "this machine does not print" — not an address of
-      // zero length that a socket would then try to open.
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      await prefs.setLateArrivalPrinterHost('10.0.0.31');
-      await prefs.setLateArrivalPrinterHost('   ');
-
-      expect(prefs.lateArrivalPrinterHost, isNull);
-      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
-      await reloaded.load();
-      expect(reloaded.lateArrivalPrinterHost, isNull);
-    });
-
-    test('a value of the wrong type reads as nothing configured', () async {
-      file.writeAsStringSync('{"lateArrivalPrinterHost": 9100}');
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      expect(prefs.lateArrivalPrinterHost, isNull);
-    });
-
-    test('it lives beside the other remembered values', () async {
+      // The address and the ticket header moved into the shared settings
+      // document as a list of named printers. Nothing migrates them — the
+      // late-arrival flow is not in production use yet — but the bag preserves
+      // keys it does not understand, so an install that is downgraded, or a
+      // second build sharing this machine, still finds what it wrote.
+      file.writeAsStringSync(
+        '{"lateArrivalPrinterHost": "10.0.0.31", '
+        '"lateArrivalTicketHeader": "SMA"}',
+      );
       final prefs = LocalPreferences(FileLocalPreferenceStore(file));
       await prefs.load();
       await prefs.setLastDeletionDate(DateTime(2026, 3, 14));
-      await prefs.setReleaseNotesSeenVersion('1.2.0');
-      await prefs.setLateArrivalPrinterHost('10.0.0.31');
-      await prefs.setLateArrivalTicketHeader('SMA');
 
-      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
-      await reloaded.load();
-      expect(reloaded.lastDeletionDate, DateTime(2026, 3, 14));
-      expect(reloaded.releaseNotesSeenVersion, '1.2.0');
-      expect(reloaded.lateArrivalPrinterHost, '10.0.0.31');
-      expect(reloaded.lateArrivalTicketHeader, 'SMA');
-    });
-  });
-
-  group('the ticket header (#429)', () {
-    test('an install that has never set one prints no header', () async {
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      expect(prefs.lateArrivalTicketHeader, isNull);
-    });
-
-    test('survives a restart of this machine', () async {
-      final first = LocalPreferences(FileLocalPreferenceStore(file));
-      await first.load();
-      await first.setLateArrivalTicketHeader('SMA');
-
-      final second = LocalPreferences(FileLocalPreferenceStore(file));
-      await second.load();
-      expect(second.lateArrivalTicketHeader, 'SMA');
-      expect(file.readAsStringSync(), contains('"lateArrivalTicketHeader"'));
-    });
-
-    test('is trimmed, and a blank one clears it rather than storing ""',
-        () async {
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      await prefs.setLateArrivalTicketHeader('  SSM \n');
-      expect(prefs.lateArrivalTicketHeader, 'SSM');
-      await prefs.setLateArrivalTicketHeader('   ');
-      expect(prefs.lateArrivalTicketHeader, isNull);
-    });
-
-    test('a value of the wrong type reads as nothing configured', () async {
-      file.writeAsStringSync('{"lateArrivalTicketHeader": 12}');
-      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
-      await prefs.load();
-      expect(prefs.lateArrivalTicketHeader, isNull);
+      final String written = file.readAsStringSync();
+      expect(written, contains('lateArrivalPrinterHost'));
+      expect(written, contains('lateArrivalTicketHeader'));
+      expect(written, contains('lastDeletionDate'));
     });
   });
 
@@ -263,6 +187,94 @@ void main() {
 
       expect(prefs.lastDeletionDate, DateTime(2026, 3, 14),
           reason: 'the session keeps its answer even when the disk refuses it');
+    });
+  });
+
+  group('the selected ticket printer (#436)', () {
+    test('a fresh install has picked no printer', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+    });
+
+    test('survives a restart — a desk stays pointed at its printer', () async {
+      final first = LocalPreferences(FileLocalPreferenceStore(file));
+      await first.load();
+      await first.setLateArrivalPrinterId('p-onthaal');
+
+      final second = LocalPreferences(FileLocalPreferenceStore(file));
+      await second.load();
+
+      expect(second.lateArrivalPrinterId, 'p-onthaal');
+    });
+
+    test('stores the id and nothing about the address', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalPrinterId('p-onthaal');
+
+      // The whole reason the choice is kept by id: an administrator following
+      // a printer onto a new IP must not unselect the desks that chose it.
+      final Object? written = jsonDecode(file.readAsStringSync());
+      expect(
+        (written! as Map<String, dynamic>)['lateArrivalPrinterId'],
+        'p-onthaal',
+      );
+      expect(file.readAsStringSync(), isNot(contains('host')));
+    });
+
+    test('Geen printer clears the choice rather than storing a blank',
+        () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalPrinterId('p-onthaal');
+      await prefs.setLateArrivalPrinterId(null);
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+
+      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
+      await reloaded.load();
+      expect(reloaded.lateArrivalPrinterId, isNull);
+    });
+
+    test('a blank or whitespace id reads back as no choice at all', () async {
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'lateArrivalPrinterId': '   '}),
+      );
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+    });
+
+    test('an id naming a printer that no longer exists reads back unchanged',
+        () async {
+      // Resolving it is the scan tab's job, not the bag's: the tab is what can
+      // say so to the operator, and what replaces it on the next pick.
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'lateArrivalPrinterId': 'p-weg'}),
+      );
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, 'p-weg');
+    });
+
+    test('the address #406 kept here is not mistaken for a choice', () async {
+      // It is carried, not migrated — see "the retired printer keys (#435)"
+      // above. What matters here is that the new key reads *only* itself: an
+      // install that was configured under #406 has chosen no printer yet.
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'lateArrivalPrinterHost': '10.1.2.3',
+          'lateArrivalTicketHeader': 'SMA',
+        }),
+      );
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, isNull);
     });
   });
 

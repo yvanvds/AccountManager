@@ -24,8 +24,8 @@
 ///   the Smartschool passphrase). Those are the school's; this one is a person's,
 ///   and putting it there would let any operator's app read a colleague's
 ///   password.
-/// - `preferences.json` is per-machine and is where the ticket printer's address
-///   lives (#406) — but it is deliberately plain JSON, and its own doc says no
+/// - `preferences.json` is per-machine and is where this desk's own working
+///   answers live — but it is deliberately plain JSON, and its own doc says no
 ///   secret goes in it.
 ///
 /// So: a file of its own, next to `connection.json` and `preferences.json` under

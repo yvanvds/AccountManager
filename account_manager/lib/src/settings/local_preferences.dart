@@ -214,65 +214,52 @@ class LocalPreferences {
 
   static const String _releaseNotesSeenVersionKey = 'releaseNotesSeenVersion';
 
-  /// The host name or IP of the ticket printer standing at *this* desk (#406),
-  /// or `null` when this machine does not print.
+  /// Which of the shared ticket printers (#435) this desk prints on (#436) —
+  /// the entry's stable `TicketPrinter.id`, never its address.
   ///
-  /// Machine-local rather than in the shared `AppSettings` document, and this
-  /// is the one value in the whole late-arrival slice where that is the right
-  /// answer. The reason list above it is shared precisely so every desk spells
-  /// "bus te laat" the same way — but a printer is a box on a table in one
-  /// room. Two reception desks have two printers on two addresses, and a shared
-  /// setting would send desk two's tickets to desk one, where nobody is
-  /// standing. Worse, an operator picking up a dead desk's queue from her own
-  /// laptop (#403) would inherit an address for a printer she is not sitting
-  /// at.
+  /// **Machine-local, exactly as the single address it replaces was** (#406).
+  /// The printer a desk prints on is a fact about where this machine is
+  /// standing — "the one next to me right now" — not about the school, so it
+  /// stays out of the shared document, and an office laptop that never picks
+  /// one honestly prints nothing.
   ///
-  /// `null` (or blank) is therefore a *state*, not an omission: it means "this
-  /// machine does not print", which is what an office laptop honestly is —
-  /// `LateArrivalPrinter` reports it as `LateArrivalPrintState.disabled` rather
-  /// than as a fault.
-  String? get lateArrivalPrinterHost {
-    final Object? raw = _values[_lateArrivalPrinterHostKey];
+  /// **What changed is *what* is stored.** #406 kept the address here; the
+  /// header (#429) sat beside it. Both now ride on the shared entry, and this
+  /// machine keeps only the choice. An id survives an administrator correcting
+  /// a label or following a printer onto a new IP after DHCP moved it — an
+  /// address would silently unselect every desk that used that printer.
+  ///
+  /// `null` is a machine that has not chosen, or one whose operator picked
+  /// **Geen printer**: the honest "no ticket comes out" state, never a fault.
+  /// An id that no longer appears in the shared list reads back unchanged —
+  /// the scan tab is what notices and says so, and the next choice replaces it.
+  ///
+  /// A `lateArrivalPrinterHost` or `lateArrivalTicketHeader` still sitting in
+  /// an older `preferences.json` is simply an unread key — the bag preserves
+  /// what it does not understand — and nothing migrates it: the late-arrival
+  /// flow is not in production use yet.
+  String? get lateArrivalPrinterId {
+    final Object? raw = _values[_lateArrivalPrinterIdKey];
     return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
   }
 
-  /// Records the printer address for this machine. A blank [host] clears it,
-  /// which switches printing off here rather than storing an empty address.
-  Future<void> setLateArrivalPrinterHost(String host) {
-    final String trimmed = host.trim();
-    return _set(
-      _lateArrivalPrinterHostKey,
-      trimmed.isEmpty ? null : trimmed,
-    );
-  }
-
-  static const String _lateArrivalPrinterHostKey = 'lateArrivalPrinterHost';
-
-  /// The few characters printed large at the top of every late-arrival ticket
-  /// this desk prints (#429) — the school's code, typically — or `null` for a
-  /// ticket with no header line.
+  /// Remembers [id] as the printer this machine prints on, or clears the
+  /// choice when it is `null` or blank.
   ///
-  /// Machine-local for the same reason the printer address is: a desk prints
-  /// for one school, and the group has several. The desk at one school prints
-  /// its code, the desk at the next prints another, and neither wants the
-  /// other's. Stored trimmed; the composer refuses one longer than
-  /// `ticketHeaderMaxLength`, and the settings field cannot enter one.
-  String? get lateArrivalTicketHeader {
-    final Object? raw = _values[_lateArrivalTicketHeaderKey];
-    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
-  }
-
-  /// Records the ticket header for this machine. A blank [header] clears it,
-  /// which prints no header line rather than an empty one.
-  Future<void> setLateArrivalTicketHeader(String header) {
-    final String trimmed = header.trim();
+  /// Clearing is what **Geen printer** stores, and it is also how a stale id —
+  /// one naming a printer that has since been removed from the shared list —
+  /// leaves the bag: the moment the operator picks anything else, the id that
+  /// no longer resolves is overwritten rather than left to be re-reported on
+  /// every launch.
+  Future<void> setLateArrivalPrinterId(String? id) {
+    final String? clean = id?.trim();
     return _set(
-      _lateArrivalTicketHeaderKey,
-      trimmed.isEmpty ? null : trimmed,
+      _lateArrivalPrinterIdKey,
+      clean == null || clean.isEmpty ? null : clean,
     );
   }
 
-  static const String _lateArrivalTicketHeaderKey = 'lateArrivalTicketHeader';
+  static const String _lateArrivalPrinterIdKey = 'lateArrivalPrinterId';
 
   // --- the bag ---------------------------------------------------------------
 

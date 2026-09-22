@@ -57,6 +57,12 @@ AppSettings _sampleSettings() => AppSettings(
         LateArrivalReason('Treinvertraging'),
         LateArrivalReason('Verslapen', isValid: false),
       ],
+      ticketPrinters: const [
+        TicketPrinter(
+            id: 'prn-1', label: 'Balie A', host: '10.0.1.20', header: 'SMA'),
+        TicketPrinter(
+            id: 'prn-2', label: 'Balie B', host: '10.0.1.21', header: 'SSM'),
+      ],
     );
 
 void expectSameSettings(AppSettings a, AppSettings b) {
@@ -74,6 +80,7 @@ void expectSameSettings(AppSettings a, AppSettings b) {
   expect(a.staffWifi, equals(b.staffWifi));
   expect(a.studentWifi, equals(b.studentWifi));
   expect(a.lateArrivalReasons, equals(b.lateArrivalReasons));
+  expect(a.ticketPrinters, equals(b.ticketPrinters));
 }
 
 List<Map<String, dynamic>> encodeRules<T>(
@@ -167,6 +174,91 @@ void main() {
         <String, Object?>{'label': 'Bus', 'valid': true},
         <String, Object?>{'label': 'Verkeer', 'valid': true},
       ]);
+    });
+
+    test('a document predating the printer list has no printers (#435)', () {
+      // No shipped default, deliberately unlike the reason list directly above:
+      // there is no plausible printer address, and an install that has never
+      // been configured genuinely has none. The desk registers, it just hands
+      // out no paper.
+      final settings =
+          AppSettings.fromJson(<String, dynamic>{'debugMode': true});
+      expect(settings.ticketPrinters, isEmpty);
+    });
+
+    test('an emptied printer list is honoured (#435)', () {
+      // The opposite of the reason list one test up, and that contrast is the
+      // point: an administrator who removed the last printer meant it, and a
+      // list that silently grew an entry back would send tickets somewhere
+      // nobody asked for.
+      final settings = AppSettings.fromJson(<String, dynamic>{
+        'ticketPrinters': <dynamic>[],
+      });
+      expect(settings.ticketPrinters, isEmpty);
+      expect(
+        AppSettings.fromJson(settings.toJson()).ticketPrinters,
+        isEmpty,
+      );
+    });
+
+    test('the printer list is normalized on the way out as well (#435)', () {
+      // Several desks write this document. An untrimmed address, a half-typed
+      // entry with no host, or two entries sharing an id must not become what
+      // every other desk inherits — the last one especially, because a desk
+      // stores its choice as an id (#436).
+      final settings = const AppSettings().copyWith(
+        ticketPrinters: const <TicketPrinter>[
+          TicketPrinter(
+              id: ' dup ',
+              label: ' Balie A ',
+              host: ' 10.0.1.20 ',
+              header: ' SMA '),
+          TicketPrinter(id: 'dup', label: 'Balie B', host: '10.0.1.21'),
+          TicketPrinter(id: 'p3', label: 'Half ingetypt', host: '  '),
+        ],
+      );
+
+      final List<Map<String, Object?>> encoded =
+          (settings.toJson()['ticketPrinters'] as List<dynamic>)
+              .cast<Map<String, Object?>>();
+      expect(encoded, hasLength(2), reason: 'the hostless entry is dropped');
+      expect(encoded.first, <String, Object?>{
+        'id': 'dup',
+        'label': 'Balie A',
+        'host': '10.0.1.20',
+        'header': 'SMA',
+      });
+      // The first holder keeps the id; the later claimant is re-minted, so no
+      // desk's stored selection can resolve to two printers.
+      expect(encoded[1]['label'], 'Balie B');
+      expect(encoded[1]['id'], isNot('dup'));
+      expect((encoded[1]['id']! as String), hasLength(ticketPrinterIdLength));
+    });
+
+    test('a printer keeps its id across a relabel and a re-address (#435)', () {
+      // What the desk's selector stands on (#436): the id is minted once, and
+      // editing the two fields an administrator actually edits must not move
+      // it, or every desk that had picked this printer would come loose.
+      final TicketPrinter created =
+          TicketPrinter.create(label: 'Balie A', host: '10.0.1.20');
+      final AppSettings first = const AppSettings()
+          .copyWith(ticketPrinters: <TicketPrinter>[created]);
+      final AppSettings edited = first.copyWith(
+        ticketPrinters: <TicketPrinter>[
+          first.ticketPrinters.single
+              .copyWith(label: 'Onthaal', host: '10.0.1.99'),
+        ],
+      );
+
+      final AppSettings reloaded = AppSettings.fromJson(edited.toJson());
+      expect(reloaded.ticketPrinters.single.id, created.id);
+      expect(reloaded.ticketPrinters.single.label, 'Onthaal');
+      expect(reloaded.ticketPrinters.single.host, '10.0.1.99');
+      // And it still resolves from a desk's stored id (#436).
+      expect(
+        findTicketPrinter(reloaded.ticketPrinters, created.id)?.host,
+        '10.0.1.99',
+      );
     });
 
     test('an explicitly emptied root list is honoured (#351)', () {

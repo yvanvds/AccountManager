@@ -244,15 +244,16 @@ class LateArrivalPrinter {
           ? const LateArrivalPrintStatus(LateArrivalPrintState.idle, '')
           : const LateArrivalPrintStatus(
               LateArrivalPrintState.disabled,
-              'Er is op deze computer geen ticketprinter ingesteld, dus er '
+              'Er is voor deze balie geen ticketprinter gekozen, dus er '
               'worden geen tickets afgedrukt. De registratie zelf gaat '
               'gewoon door.',
             ),
     );
   }
 
-  /// The printer's host name or IP, as this machine has it configured. Empty
-  /// means this machine does not print.
+  /// The printer's host name or IP, off the shared list entry this desk
+  /// selected (#435, #436). Empty means this desk does not print — nobody has
+  /// picked one, or the operator picked **Geen printer**.
   final String host;
 
   /// Always [ippPrintPort] in practice — the operator is never asked for it —
@@ -262,8 +263,9 @@ class LateArrivalPrinter {
   final TicketTransport transport;
 
   /// The few characters printed large at the top of every ticket (#429) — the
-  /// school's code as this desk has it configured. Empty prints no header
-  /// line. See `LocalPreferences.lateArrivalTicketHeader`.
+  /// school's code. Empty prints no header line. It comes off the shared
+  /// [TicketPrinter] entry this desk selected (#435, #436), not off the
+  /// machine: the thing that stands at one school is the printer.
   final String header;
 
   final Duration timeout;
@@ -315,9 +317,9 @@ class LateArrivalPrinter {
         header: header,
       );
     } on Object catch (e) {
-      // A header that does not fit the paper, say — one hand-edited into
-      // `preferences.json`. It is still not the student's problem: report it
-      // and let the registration stand.
+      // A header that does not fit the paper, say — one hand-edited into the
+      // shared settings document. It is still not the student's problem: report
+      // it and let the registration stand.
       _report(LateArrivalPrintStatus(
         LateArrivalPrintState.failed,
         'Het ticket kon niet worden opgemaakt. De registratie is bewaard en '
@@ -342,8 +344,15 @@ class LateArrivalPrinter {
 
   void _enqueue(Uint8List bytes) {
     _report(const LateArrivalPrintStatus(LateArrivalPrintState.printing, ''));
+    // Deliberately **not** guarded on `_disposed` here. A job only reaches this
+    // queue while the printer is alive ([printTicket] refuses once disposed),
+    // so everything in it is a ticket a student was told was coming. Dropping
+    // the ones that had not started yet is what [dispose] says it does not do,
+    // and since #436 it is reachable at the counter: rebinding the selector
+    // replaces this object, and a switch made in the seconds after a
+    // confirmation would have taken that student's ticket with it. Reporting
+    // is what stops — [_report] is the no-op after dispose, not the send.
     _queue = _queue.then((_) async {
-      if (_disposed) return;
       try {
         await transport.send(
           host: host,
@@ -370,7 +379,12 @@ class LateArrivalPrinter {
   }
 
   /// Stops reporting and lets the queue run out. Nothing is cancelled: a
-  /// ticket already on the wire is a ticket the student is waiting for.
+  /// ticket already accepted is a ticket a student was told was coming, whether
+  /// it is on the wire or still waiting behind one that is.
+  ///
+  /// [settled] is what a caller awaits to know the paper is out; disposing does
+  /// not shorten it. What does end here is the status — the operator this
+  /// printer was reporting to is looking at a different one now (#436).
   void dispose() {
     _disposed = true;
     _status.dispose();

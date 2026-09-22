@@ -60,6 +60,7 @@ class AppSettings {
     this.staffWifi = defaultStaffWifi,
     this.studentWifi = defaultStudentWifi,
     this.lateArrivalReasons = defaultLateArrivalReasons,
+    this.ticketPrinters = const <TicketPrinter>[],
   }) : _smartschool = smartschool;
 
   /// The school prefix used by the linker to scope Azure users to this school
@@ -154,6 +155,29 @@ class AppSettings {
   /// not a configuration anybody wants.
   final List<LateArrivalReason> lateArrivalReasons;
 
+  /// The ticket printers a reception desk can be pointed at, in the order an
+  /// administrator entered them (#435).
+  ///
+  /// **Shared, like the reason list above it and for the same reason** — one
+  /// list, entered once, seen by every desk. The address used to be
+  /// machine-local (#406) on the argument that a printer stands in one room;
+  /// what that missed is that *operators* do not. The school has two reception
+  /// desks and may get more, and an operator who moves desks, or brings her own
+  /// laptop, would otherwise have to retype an IP to print. Here she picks a
+  /// printer from the list instead (#436).
+  ///
+  /// Each entry carries its own ticket header (#429), because the thing that
+  /// stands at one school is the printer, not the laptop: picking a different
+  /// printer prints the right school code without a second setting.
+  ///
+  /// **Empty is honoured**, and it is the default — the one place this parts
+  /// company with [lateArrivalReasons]. There is no shipped list to fall back
+  /// to (a plausible printer address does not exist), and "no printers
+  /// configured yet" is what every install is before an administrator enters
+  /// one. A desk with no printer registers exactly as it always did, only
+  /// without a ticket. See [decodeTicketPrinters].
+  final List<TicketPrinter> ticketPrinters;
+
   /// Per-WISA-school ownership entries, keyed by school id. Empty means no
   /// school has been marked managed yet — the group-membership plumbing #113
   /// slice 2 reads, but no action fires here.
@@ -196,6 +220,7 @@ class AppSettings {
     WifiNetwork? staffWifi,
     WifiNetwork? studentWifi,
     List<LateArrivalReason>? lateArrivalReasons,
+    List<TicketPrinter>? ticketPrinters,
   }) {
     return AppSettings(
       schoolPrefix: schoolPrefix ?? this.schoolPrefix,
@@ -211,6 +236,7 @@ class AppSettings {
       staffWifi: staffWifi ?? this.staffWifi,
       studentWifi: studentWifi ?? this.studentWifi,
       lateArrivalReasons: lateArrivalReasons ?? this.lateArrivalReasons,
+      ticketPrinters: ticketPrinters ?? this.ticketPrinters,
     );
   }
 
@@ -242,6 +268,16 @@ class AppSettings {
       'lateArrivalReasons': <Map<String, Object?>>[
         for (final reason in normalizeLateArrivalReasons(lateArrivalReasons))
           reason.toJson(),
+      ],
+      // Normalized on the way out for the same reason as the reasons above
+      // (#405), and with one extra job: an entry that reached this document
+      // without an id, or sharing one with another entry, gets a fresh one
+      // here. A desk stores its choice as an id (#436), so an ambiguous one is
+      // the one defect that would silently point a desk at another room's
+      // printer.
+      'ticketPrinters': <Map<String, Object?>>[
+        for (final printer in normalizeTicketPrinters(ticketPrinters))
+          printer.toJson(),
       ],
     };
   }
@@ -338,6 +374,10 @@ class AppSettings {
       // there is no "the operator turned it off" reading to honour: an empty
       // reason list leaves the desk unable to register anybody.
       lateArrivalReasons: decodeLateArrivalReasons(json['lateArrivalReasons']),
+      // Absent *or* empty ⇒ no printers (#435), unlike the reasons directly
+      // above: there is no shipped default that could be right, and an
+      // administrator who removed the last printer meant it.
+      ticketPrinters: decodeTicketPrinters(json['ticketPrinters']),
       wisaSchools: adoptRetiredVirtualMarks(
         <WisaSchoolProfile>[
           for (final p in wisaSchools)

@@ -13,7 +13,6 @@ import '../late_arrivals/late_arrival_printer.dart';
 import '../late_arrivals/operator_credentials.dart';
 import '../reconcile/reconcile_bootstrap.dart' show StoreEndpoints;
 import '../settings/connection_config.dart';
-import '../settings/local_preferences.dart';
 import '../settings/settings_bootstrap.dart';
 import '../settings/wisa_rule_labels.dart';
 import '../update/app_release.dart' show AppRelease;
@@ -207,35 +206,30 @@ class _SettingsScreenState extends State<SettingsScreen>
   // student before anyone has opened this section.
   List<LateArrivalReason> _lateArrivalReasons = defaultLateArrivalReasons;
 
-  // The ticket printer at *this* desk (#406). Unlike the reason list above it on
-  // the Te laat tab this is machine-local: it lives in `preferences.json`, not in
-  // the shared settings document, because two reception desks have two printers
-  // on two addresses and a shared one would send desk two's tickets to desk one.
-  // See `LocalPreferences.lateArrivalPrinterHost`.
-  final _printerHost = TextEditingController();
-
-  // The few characters at the top of every ticket this desk prints (#429):
-  // the school's code. Machine-local like the address above it, because a desk
-  // prints for one school and the group has several. See
-  // `LocalPreferences.lateArrivalTicketHeader`.
-  final _ticketHeader = TextEditingController();
-
-  /// The preferences of this launch, or `null` in a bare widget test with no
-  /// [LocalPreferencesScope] — the field then edits a session-only bag, exactly
-  /// as the deletion-date prompt behaves without one.
-  LocalPreferences? _preferences;
-
-  /// Guards the one-time read of the stored host into [_printerHost], so a
-  /// dependency change cannot overwrite what the operator is typing.
-  bool _printerHostLoaded = false;
+  // The shared ticket-printer list (#435): a mutable working copy the editor
+  // edits in place, committed by `_collect` on save — the same treatment the
+  // reason list above it gets.
+  //
+  // Seeded empty rather than with a default, because that is what an
+  // unconfigured document means here: there is no plausible printer address to
+  // ship, and a desk with no printer registers perfectly well, it just hands
+  // out no paper.
+  List<TicketPrinter> _ticketPrinters = const <TicketPrinter>[];
 
   /// The outcome of the last **Testticket afdrukken**, or `null` when none has
-  /// been tried this session.
-  LateArrivalPrintStatus? _printerStatus;
-  bool _printerTesting = false;
+  /// been tried this session — keyed by the printer's id, because the section
+  /// tests one *row* at a time and an outcome shown under the wrong row would
+  /// be worse than none at all.
+  final Map<String, LateArrivalPrintStatus> _printerStatus =
+      <String, LateArrivalPrintStatus>{};
 
-  // The reception operator's own Smartschool login (#409). Per-machine like the
-  // printer above it, but unlike anything else on this tab it is a *credential*:
+  /// The id of the printer a test ticket is on its way to, or `null` when none
+  /// is in flight. One at a time: the button that started it is the one that
+  /// says "bezig", and the others stay usable.
+  String? _printerTesting;
+
+  // The reception operator's own Smartschool login (#409). Per-machine, and
+  // unlike anything else on this tab it is a *credential*:
   // the password never leaves this machine, is DPAPI-encrypted at rest, and is
   // deliberately not in the shared document where a colleague would read it.
   final _ssOperatorUsername = TextEditingController();
@@ -243,8 +237,7 @@ class _SettingsScreenState extends State<SettingsScreen>
   final _ssOperatorMfa = TextEditingController(); // write-only secret
 
   /// This launch's late-arrival stack, or `null` in a bare widget test with no
-  /// [LateArrivalDeskScope] — the section then renders inert, exactly as the
-  /// printer field behaves without a [LocalPreferencesScope].
+  /// [LateArrivalDeskScope] — the section then renders inert.
   LateArrivalDesk? _desk;
 
   /// Guards the one-time read of the stored login, so a dependency change cannot
@@ -348,11 +341,6 @@ class _SettingsScreenState extends State<SettingsScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // The ticket printer's address is machine-local (#406), so it comes from
-    // the preference bag rather than from the settings document — which is why
-    // it is read here and not in `_populate`. Once only: a dependency change
-    // must not overwrite an address the operator is halfway through typing.
-    _preferences = LocalPreferencesScope.maybeOf(context);
     _desk = LateArrivalDeskScope.maybeOf(context);
     if (!_operatorLoginLoaded) {
       _operatorLoginLoaded = true;
@@ -362,17 +350,11 @@ class _SettingsScreenState extends State<SettingsScreen>
       // desk has finished starting.
       unawaited(_loadOperatorLogin());
     }
-    if (_printerHostLoaded) return;
-    _printerHostLoaded = true;
-    _printerHost.text = _preferences?.lateArrivalPrinterHost ?? '';
-    _ticketHeader.text = _preferences?.lateArrivalTicketHeader ?? '';
   }
 
   @override
   void dispose() {
     _tabs.dispose();
-    _printerHost.dispose();
-    _ticketHeader.dispose();
     _ssOperatorUsername.dispose();
     _ssOperatorPassword.dispose();
     _ssOperatorMfa.dispose();
@@ -660,6 +642,7 @@ class _SettingsScreenState extends State<SettingsScreen>
     _studentWifiCode.text = s.studentWifi.code;
 
     _lateArrivalReasons = List<LateArrivalReason>.of(s.lateArrivalReasons);
+    _ticketPrinters = List<TicketPrinter>.of(s.ticketPrinters);
 
     _wisaServer.text = s.wisa.server;
     _wisaPort.text = s.wisa.port;
@@ -797,27 +780,83 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // Ticketprinter (#406)
+  // Ticketprinters (#435)
   // ---------------------------------------------------------------------------
 
-  /// Prints a sample ticket on the address currently in the field.
+  /// Prompts for a label, an address and a header, and appends the printer.
+  /// Cancelling leaves the list untouched.
+  ///
+  /// The id is minted here, once, and never touched again — which is what lets
+  /// a desk's stored choice (#436) survive a relabel or a move to a new IP.
+  Future<void> _addTicketPrinter() async {
+    final TicketPrinter? printer = await _promptTicketPrinter();
+    if (printer == null || !mounted) return;
+    toggle(() {
+      _ticketPrinters = <TicketPrinter>[..._ticketPrinters, printer];
+    });
+  }
+
+  /// Re-prompts for the printer at [index] — label, address and header.
+  ///
+  /// The entry keeps its id: correcting a name or following a printer onto a
+  /// new address is editing *this* printer, and a desk that had selected it is
+  /// still pointed at the box in that room.
+  Future<void> _editTicketPrinter(int index) async {
+    final TicketPrinter existing = _ticketPrinters[index];
+    final TicketPrinter? edited = await _promptTicketPrinter(initial: existing);
+    if (edited == null || !mounted) return;
+    toggle(() {
+      _ticketPrinters = List<TicketPrinter>.of(_ticketPrinters)
+        ..[index] = edited.copyWith(id: existing.id);
+    });
+  }
+
+  /// Drops the printer at [index].
+  ///
+  /// Unguarded, unlike the reason list: an empty printer list is honoured
+  /// rather than re-defaulted, because "this school hands out no tickets" is a
+  /// configuration and "this desk has no buttons" is not.
+  void _removeTicketPrinter(int index) {
+    final TicketPrinter removed = _ticketPrinters[index];
+    toggle(() {
+      _ticketPrinters = List<TicketPrinter>.of(_ticketPrinters)
+        ..removeAt(index);
+      // Keyed by id, so the surviving rows keep their own outcomes even though
+      // every index below this one has just shifted up.
+      _printerStatus.remove(removed.id);
+    });
+  }
+
+  /// Asks for one printer's label, address and header. Returns the entry — with
+  /// a freshly minted id when adding — or `null` when the operator cancels.
+  Future<TicketPrinter?> _promptTicketPrinter({TicketPrinter? initial}) {
+    return showDialog<TicketPrinter>(
+      context: context,
+      builder: (_) => _PrinterDialog(initial: initial),
+    );
+  }
+
+  /// Prints a sample ticket on one row's address, with that row's header.
   ///
   /// The only way to find out whether an IP typed into a text box is the right
-  /// one, short of making a student be late. It deliberately uses the address
-  /// and the header **as typed** rather than the saved ones, so the operator
-  /// can try a value before committing it, and it goes through the same
-  /// composition, the same transport and the same error reporting as a real
-  /// ticket — a test print down a different path would prove nothing about the
-  /// real one.
-  Future<void> _testPrintTicket() async {
+  /// one, short of making a student be late — and with a list rather than a
+  /// single field it has to be *per row*, because "the printers are configured"
+  /// is now several claims and an administrator has to be able to check each.
+  /// It goes through the same composition, the same transport and the same
+  /// error reporting as a real ticket; a test print down a different path would
+  /// prove nothing about the real one.
+  ///
+  /// The entry as it stands in the working list, saved or not, so a printer can
+  /// be tried before the tab is committed.
+  Future<void> _testPrintTicket(TicketPrinter entry) async {
     final LateArrivalPrinter printer = LateArrivalPrinter(
-      host: _printerHost.text,
-      header: _ticketHeader.text,
+      host: entry.host,
+      header: entry.header,
       transport: widget.ticketTransport ?? const IppTicketTransport(),
     );
     setState(() {
-      _printerTesting = true;
-      _printerStatus = null;
+      _printerTesting = entry.id;
+      _printerStatus.remove(entry.id);
     });
     printer.printTestTicket();
     await printer.settled;
@@ -825,8 +864,8 @@ class _SettingsScreenState extends State<SettingsScreen>
     printer.dispose();
     if (!mounted) return;
     setState(() {
-      _printerTesting = false;
-      _printerStatus = outcome;
+      _printerTesting = null;
+      _printerStatus[entry.id] = outcome;
     });
   }
 
@@ -1219,6 +1258,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       // and the one thing it must never do is hand another desk two spellings
       // of the same reason.
       lateArrivalReasons: normalizeLateArrivalReasons(_lateArrivalReasons),
+      ticketPrinters: normalizeTicketPrinters(_ticketPrinters),
       wisa: base.wisa.copyWith(
         server: _wisaServer.text.trim(),
         port: _wisaPort.text.trim(),
@@ -1254,15 +1294,12 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _save() async {
-    // First, and outside the document's own failure path: the printer address
-    // describes the box on *this* desk, so it is written to `preferences.json`
-    // whether or not the shared document can be reached (#406). The ticket
-    // header (#429) is this desk's too.
-    await _preferences?.setLateArrivalPrinterHost(_printerHost.text);
-    await _preferences?.setLateArrivalTicketHeader(_ticketHeader.text);
-    // The same argument, one step stronger (#409): this operator's Smartschool
-    // login is a credential on this machine, it is what makes the desk drain at
-    // all, and a Cosmos that will not answer must not be able to stop it landing.
+    // First, and outside the document's own failure path (#409): this
+    // operator's Smartschool login is a credential on this machine, it is what
+    // makes the desk drain at all, and a Cosmos that will not answer must not
+    // be able to stop it landing. The printer list is not in this bracket — it
+    // is shared configuration now (#435) and goes into the document with the
+    // rest of the tab.
     await _saveOperatorLogin();
 
     final services = _services;
@@ -1633,20 +1670,24 @@ class _SettingsForm extends StatelessWidget {
     );
   }
 
-  /// The ticket printer at this desk (#406).
+  /// The shared ticket-printer list (#435).
   ///
-  /// The middle rung: this machine, but every operator who sits at it.
+  /// The second rung, and on the *same* rung as the reason list above it: both
+  /// are entered once and read by every desk. That is a change from #406, where
+  /// the address was this machine's alone — the school has two reception desks
+  /// now and operators who do not stand at the same one every day, so a printer
+  /// per machine meant retyping an IP to move desks. The section says the list
+  /// is shared in so many words, the way the reason list does, because until
+  /// this issue the section directly above it said the opposite.
   ///
-  /// Directly under the reason list rather than on the Verbinding tab, even
-  /// though it is machine-local like everything there. Verbinding is the
-  /// *bootstrap* — the app registration, the Cosmos endpoint, the things that
-  /// have to be reachable when nothing else is — and a printer is not that. An
-  /// operator setting up a reception desk configures the buttons and the printer
-  /// in one sitting, so they belong on one tab, one section apart, with each
-  /// saying in so many words which of the two is shared and which is not.
+  /// Directly under the reasons rather than on the Verbinding tab: Verbinding
+  /// is the *bootstrap* — the app registration, the Cosmos endpoint, the things
+  /// that have to be reachable when nothing else is — and a printer is not
+  /// that. An administrator setting reception up configures the buttons and the
+  /// printers in one sitting, so they belong on one tab, one section apart.
   Widget _lateArrivalPrinterSection() {
     return _Section(
-      title: 'Te laat — ticketprinter',
+      title: 'Te laat — ticketprinters',
       children: <Widget>[
         _LateArrivalPrinterEditor(state: state),
       ],
@@ -2292,17 +2333,12 @@ class _Field extends StatelessWidget {
     required this.label,
     required this.controller,
     this.keyboardType,
-    this.maxLength,
   });
 
   final String keyValue;
   final String label;
   final TextEditingController controller;
   final TextInputType? keyboardType;
-
-  /// A hard cap on what can be typed, with the counter shown. For the one
-  /// field whose value has to fit a physical width (the ticket header, #429).
-  final int? maxLength;
 
   @override
   Widget build(BuildContext context) {
@@ -2312,7 +2348,6 @@ class _Field extends StatelessWidget {
         key: ValueKey(keyValue),
         controller: controller,
         keyboardType: keyboardType,
-        maxLength: maxLength,
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),
@@ -3013,28 +3048,31 @@ class _ReasonDialogState extends State<_ReasonDialog> {
   }
 }
 
-/// The ticket printer this desk prints late-arrival tickets on (#406), and
-/// what it prints at the top of them (#429).
+/// The ticket printers a reception desk can print late-arrival tickets on
+/// (#435), each with the header its tickets carry (#429).
 ///
-/// One address, one header, a test button, and a sentence saying what the
-/// address is for. The port is not offered: the app prints over IPP, which is
-/// port [ippPrintPort] on every printer that speaks it, and a field for it
-/// would only be a way to get it wrong.
+/// A list of named printers with a per-row test button, not a single address
+/// field. #406 kept one address per machine on the reasoning that a printer is
+/// a box on a table in one room — true, but the conclusion was wrong: the
+/// school has two reception desks and may get more, and operators do not stand
+/// at the same desk every day. One address per machine meant every desk, and
+/// every laptop an operator brought along, had to be configured by hand.
 ///
-/// **Machine-local, and it says so.** The reason list one section up is shared
-/// across every desk on purpose; this is the opposite, and the difference has
-/// to be legible or an operator will assume the whole "Te laat" configuration
-/// behaves one way. Two reception desks have two printers; a shared address
-/// would send desk two's tickets to desk one. The header is local for the
-/// same reason one step removed: a desk prints for one school, and the group
-/// has several. Both are stored in `preferences.json` beside the remembered
-/// uitschrijvingsdatum, and written by the same **Opslaan** as the rest of the
-/// tab.
+/// **Shared, and it says so.** The reason list one section up is shared for
+/// exactly the same "one list, one spelling, every desk" reason, and this
+/// section now reads the same way — which is a reversal of what it said before
+/// this issue, so the note is explicit rather than implied.
 ///
-/// **Empty is a valid answer.** An empty address means this machine does not
-/// print — which is what an office laptop draining yesterday's queue honestly
-/// is — and the scan flow treats it as "no ticket", never as a fault. An empty
-/// header means a ticket with no top line, not a placeholder.
+/// **A test button per row.** "The printers are configured" is several claims
+/// once there is a list, and an administrator has to be able to check each of
+/// them without making a student be late. The port is not offered: the app
+/// prints over IPP, which is port [ippPrintPort] on every printer that speaks
+/// it, and a field for it would only be a way to get it wrong.
+///
+/// **An empty list is a valid answer** — it is what every install is before
+/// anybody has entered a printer, and what a school that registers late
+/// arrivals without handing out tickets stays. The scan flow treats "no
+/// printer" as "no ticket", never as a fault.
 class _LateArrivalPrinterEditor extends StatelessWidget {
   const _LateArrivalPrinterEditor({required this.state});
 
@@ -3044,102 +3082,337 @@ class _LateArrivalPrinterEditor extends StatelessWidget {
   Widget build(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
+    final List<TicketPrinter> printers = state._ticketPrinters;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         Text(
-          'Het adres van de bonprinter aan deze balie. De app stuurt de '
-          'tickets rechtstreeks en versleuteld naar de printer via IPP '
-          '(poort $ippPrintPort) — er is geen Windows-printer of '
-          'stuurprogramma nodig. Deze instelling geldt '
-          'alleen voor deze computer: elke balie heeft haar eigen printer. '
-          'Laat het veld leeg als hier niet afgedrukt wordt; de registratie '
-          'gaat dan gewoon door, alleen zonder ticket.',
+          'De bonprinters waar een balie op kan afdrukken. Deze lijst is '
+          'gedeeld: elke balie ziet dezelfde printers, en wie aan een andere '
+          'balie werkt kiest er gewoon één in plaats van een IP-adres over te '
+          'typen. De app stuurt de tickets rechtstreeks en versleuteld naar de '
+          'printer via IPP (poort $ippPrintPort) — er is geen Windows-printer '
+          'of stuurprogramma nodig. De ticketkop is de tekst die groot '
+          'bovenaan het ticket komt, meestal de code van de school: die hoort '
+          'bij de printer, want die staat op één school. Is de lijst leeg, dan '
+          'wordt er nergens afgedrukt; de registratie gaat gewoon door, alleen '
+          'zonder ticket.',
           key: const ValueKey('settings-printer-note'),
           style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
         const SizedBox(height: PlinkSpacing.s3),
-        _Field(
-          keyValue: 'settings-printer-host',
-          label: 'Printeradres (IP of hostnaam)',
-          controller: state._printerHost,
-        ),
-        Text(
-          'De tekst bovenaan elk ticket, groot afgedrukt: meestal de code van '
-          'de school, drie of vier tekens. Ook deze instelling geldt alleen '
-          'voor deze computer. Laat het veld leeg voor een ticket zonder kop.',
-          key: const ValueKey('settings-ticket-header-note'),
-          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
-        ),
-        const SizedBox(height: PlinkSpacing.s3),
-        _Field(
-          keyValue: 'settings-ticket-header',
-          label: 'Ticketkop',
-          controller: state._ticketHeader,
-          // What fits the paper at the header's size; the composer refuses
-          // more, so the field must not be able to enter more.
-          maxLength: ticketHeaderMaxLength,
-        ),
-        ValueListenableBuilder<TextEditingValue>(
-          valueListenable: state._printerHost,
-          builder: (_, TextEditingValue value, __) {
-            final bool configured = value.text.trim().isNotEmpty;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                OutlinedButton.icon(
-                  key: const ValueKey('settings-printer-test'),
-                  // Nothing to reach without an address, and no address to
-                  // guess: the button says so by being disabled.
-                  onPressed: !configured || state._printerTesting
-                      ? null
-                      : state._testPrintTicket,
-                  icon: const Icon(Icons.print_outlined),
-                  label: const Text('Testticket afdrukken'),
-                ),
-                _printerStatusLine(context, host: value.text.trim()),
-              ],
-            );
-          },
+        if (printers.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
+            child: Text(
+              'Er is nog geen bonprinter ingesteld.',
+              key: const ValueKey('settings-printer-empty'),
+              style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+            ),
+          ),
+        for (var i = 0; i < printers.length; i++)
+          _PrinterRow(
+            index: i,
+            printer: printers[i],
+            status: state._printerStatus[printers[i].id],
+            testing: state._printerTesting == printers[i].id,
+            // One test at a time: the row that started it says "bezig", and a
+            // second row's button waits rather than racing it.
+            onTest: state._printerTesting != null
+                ? null
+                : () => state._testPrintTicket(printers[i]),
+            onEdit: () => state._editTicketPrinter(i),
+            onRemove: () => state._removeTicketPrinter(i),
+          ),
+        const SizedBox(height: PlinkSpacing.s4),
+        OutlinedButton.icon(
+          key: const ValueKey('settings-printer-add'),
+          onPressed: state._addTicketPrinter,
+          icon: const Icon(Icons.add),
+          label: const Text('Printer toevoegen'),
         ),
       ],
     );
   }
+}
 
-  /// What the last test print did, in one line the operator can act on.
+/// One printer in the list: its name, its address and header, a test button and
+/// the edit / remove affordances. Keyed `settings-printer-<index>` so a widget
+/// or integration test can drive a specific row.
+///
+/// The address is shown beside the name rather than hidden behind **Bewerken**.
+/// It is the field that goes wrong — a typo in an IP is the single likeliest
+/// reason a desk does not print — and an administrator reading the list has to
+/// be able to spot it without opening every row.
+class _PrinterRow extends StatelessWidget {
+  const _PrinterRow({
+    required this.index,
+    required this.printer,
+    required this.status,
+    required this.testing,
+    required this.onTest,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final int index;
+  final TicketPrinter printer;
+
+  /// The outcome of this row's last test print, or null when none was tried.
+  final LateArrivalPrintStatus? status;
+
+  /// Whether this row's test ticket is on its way.
+  final bool testing;
+
+  /// Null while another row is being tested, which disables the button.
+  final VoidCallback? onTest;
+  final VoidCallback onEdit;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final LateArrivalPrintStatus? outcome = status;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Wrap(
+                  spacing: PlinkSpacing.s2,
+                  runSpacing: PlinkSpacing.s1,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    Text(
+                      printer.displayName,
+                      key: ValueKey('settings-printer-$index'),
+                      style: text.bodyMedium,
+                    ),
+                    Text(
+                      printer.host,
+                      key: ValueKey('settings-printer-$index-host'),
+                      style: text.bodySmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                    if (printer.header.isNotEmpty)
+                      PlinkBadge(
+                        printer.header,
+                        key: ValueKey('settings-printer-$index-header'),
+                        variant: BadgeVariant.spark,
+                      ),
+                  ],
+                ),
+              ),
+              OutlinedButton.icon(
+                key: ValueKey('settings-printer-$index-test'),
+                onPressed: onTest,
+                icon: const Icon(Icons.print_outlined),
+                label: const Text('Testticket afdrukken'),
+              ),
+              IconButton(
+                key: ValueKey('settings-printer-$index-edit'),
+                tooltip: 'Bewerken',
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: onEdit,
+              ),
+              IconButton(
+                key: ValueKey('settings-printer-$index-remove'),
+                tooltip: 'Verwijderen',
+                icon: const Icon(Icons.delete_outline),
+                onPressed: onRemove,
+              ),
+            ],
+          ),
+          _statusLine(context, outcome),
+        ],
+      ),
+    );
+  }
+
+  /// What this row's last test print did, in one line the administrator can act
+  /// on.
   ///
   /// A failure is coloured as an error and names the address that did not
   /// answer, because "it does not print" is almost always a typo in the IP or a
-  /// printer somebody switched off — and both are things the operator can fix
+  /// printer somebody switched off — and both are things that can be fixed
   /// standing there.
-  Widget _printerStatusLine(BuildContext context, {required String host}) {
+  Widget _statusLine(BuildContext context, LateArrivalPrintStatus? outcome) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
-    final LateArrivalPrintStatus? status = state._printerStatus;
     final String message;
-    if (state._printerTesting) {
+    if (testing) {
       message = 'Er wordt een testticket verstuurd…';
-    } else if (status == null) {
+    } else if (outcome == null) {
       message = '';
-    } else if (status.isFailure) {
-      message = status.message;
-    } else if (status.state == LateArrivalPrintState.disabled) {
-      message = status.message;
+    } else if (outcome.isFailure ||
+        outcome.state == LateArrivalPrintState.disabled) {
+      message = outcome.message;
     } else {
-      message = 'Het testticket is naar $host:$ippPrintPort verstuurd.';
+      message =
+          'Het testticket is naar ${printer.host}:$ippPrintPort verstuurd.';
     }
     if (message.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(top: PlinkSpacing.s2),
+      padding: const EdgeInsets.only(top: PlinkSpacing.s1),
       child: Text(
         message,
-        key: const ValueKey('settings-printer-status'),
+        key: ValueKey('settings-printer-$index-status'),
         style: text.bodyMedium?.copyWith(
-          color: status?.isFailure ?? false
+          color: outcome?.isFailure ?? false
               ? colors.error
               : colors.onSurfaceVariant,
         ),
       ),
+    );
+  }
+}
+
+/// Prompts for one ticket printer: its name, its address and the header its
+/// tickets carry (#435).
+///
+/// A blank address is refused — an entry with no address is not a printer, and
+/// `normalizeTicketPrinters` would drop it on save, so letting it be added
+/// would be a row that silently vanished. A blank *name* is allowed: the list
+/// falls back to the address, and an administrator who wants to type an IP and
+/// get on with it should be able to.
+///
+/// The id is deliberately not on screen and not editable. It is minted once
+/// here and carried through every edit, because it is what a desk's choice is
+/// stored as (#436) — renaming "Balie A" must not disconnect the desk that
+/// picked it.
+class _PrinterDialog extends StatefulWidget {
+  const _PrinterDialog({required this.initial});
+
+  /// The printer being edited, or null when adding a new one.
+  final TicketPrinter? initial;
+
+  @override
+  State<_PrinterDialog> createState() => _PrinterDialogState();
+}
+
+class _PrinterDialogState extends State<_PrinterDialog> {
+  late final TextEditingController _label =
+      TextEditingController(text: widget.initial?.label ?? '');
+  late final TextEditingController _host =
+      TextEditingController(text: widget.initial?.host ?? '');
+  late final TextEditingController _header =
+      TextEditingController(text: widget.initial?.header ?? '');
+
+  @override
+  void dispose() {
+    _label.dispose();
+    _host.dispose();
+    _header.dispose();
+    super.dispose();
+  }
+
+  bool get _isBlank => _host.text.trim().isEmpty;
+
+  void _submit() {
+    if (_isBlank) return;
+    final TicketPrinter? initial = widget.initial;
+    Navigator.of(context).pop(
+      initial == null
+          ? TicketPrinter.create(
+              label: _label.text.trim(),
+              host: _host.text.trim(),
+              header: _header.text.trim(),
+            )
+          : initial.copyWith(
+              label: _label.text.trim(),
+              host: _host.text.trim(),
+              header: _header.text.trim(),
+            ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return AlertDialog(
+      key: const ValueKey('settings-printer-dialog'),
+      title: Text(
+        widget.initial == null ? 'Printer toevoegen' : 'Printer bewerken',
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'De naam waaronder de balie deze printer kiest, en het adres '
+              'waar de tickets naartoe gaan.',
+              style: text.bodyMedium,
+            ),
+            const SizedBox(height: PlinkSpacing.s3),
+            TextField(
+              key: const ValueKey('settings-printer-label'),
+              controller: _label,
+              autofocus: true,
+              onSubmitted: (_) => _submit(),
+              decoration: const InputDecoration(
+                labelText: 'Naam',
+                hintText: 'bv. Balie A',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: PlinkSpacing.s3),
+            TextField(
+              key: const ValueKey('settings-printer-host'),
+              controller: _host,
+              onSubmitted: (_) => _submit(),
+              decoration: const InputDecoration(
+                labelText: 'Printeradres (IP of hostnaam)',
+                hintText: 'bv. 10.0.1.20',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: PlinkSpacing.s2),
+            Text(
+              'De tekst bovenaan elk ticket van deze printer, groot afgedrukt: '
+              'meestal de code van de school, drie of vier tekens. Laat leeg '
+              'voor een ticket zonder kop.',
+              key: const ValueKey('settings-ticket-header-note'),
+              style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            ),
+            const SizedBox(height: PlinkSpacing.s2),
+            TextField(
+              key: const ValueKey('settings-ticket-header'),
+              controller: _header,
+              onSubmitted: (_) => _submit(),
+              // What fits the paper at the header's size; the composer refuses
+              // more, so the field must not be able to enter more.
+              maxLength: ticketHeaderMaxLength,
+              decoration: const InputDecoration(
+                labelText: 'Ticketkop',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          key: const ValueKey('settings-printer-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Annuleren'),
+        ),
+        ValueListenableBuilder<TextEditingValue>(
+          valueListenable: _host,
+          builder: (_, __, ___) => FilledButton(
+            key: const ValueKey('settings-printer-confirm'),
+            // No address, no printer: `normalizeTicketPrinters` would drop the
+            // entry on save, so adding it would be a row that vanished.
+            onPressed: _isBlank ? null : _submit,
+            child: const Text('Bewaren'),
+          ),
+        ),
+      ],
     );
   }
 }

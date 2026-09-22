@@ -3,5 +3,6 @@
   "sonarlint.connectedMode.project": {
     "connectionId": "yvanvds",
     "projectKey": "yvanvds_AccountManager"
-  }
+  },
+  "cmake.sourceDirectory": "C:/Users/yvan/Github/Accountmanager/account_manager/windows"
 }

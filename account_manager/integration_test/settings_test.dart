@@ -23,6 +23,7 @@ import 'package:account_state/account_state.dart'
         AppSettings,
         AzureConnection,
         InMemorySecretProvider,
+        InMemorySettingsStore,
         LiveSettings,
         SecretRef,
         SmartschoolClassTree,
@@ -30,7 +31,13 @@ import 'package:account_state/account_state.dart'
         WisaSchoolProfile,
         WisaSchoolProfileLabel,
         WorkDateSetting;
-import 'package:late_arrivals/late_arrivals.dart' show InMemoryJournalStore;
+import 'package:late_arrivals/late_arrivals.dart'
+    show
+        InMemoryJournalStore,
+        TicketPrinter,
+        defaultLateArrivalReasons,
+        findTicketPrinter,
+        ippPrintPort;
 import 'package:smartschool_api/smartschool_api.dart'
     show DiscardSmartschoolGroup, SmartschoolConnector;
 import 'package:wisa_api/wisa_api.dart'
@@ -2375,6 +2382,287 @@ void main() {
       expect(systems[Origin.wisa]?.at, kFixtureDate);
       expect(systems[Origin.smartschool]?.at, driftAt);
       expect(systems[Origin.azure]?.at, driftAt);
+    });
+
+    testWidgets(
+        'Instellingen keeps one shared list of ticket printers: a printer '
+        'entered at one desk is there at the next, is testable per row, and an '
+        'emptied list stays empty (#435)', (WidgetTester tester) async {
+      // Every user-visible half of #435 in one real run, and each half needs
+      // this level.
+      //
+      // "The list is shared" is a claim about a *second* app instance over the
+      // same settings document — the exact reversal of what #406 proved, where
+      // desk two deliberately did not see desk one's address. Only a real
+      // second launch can show that, and it is the whole reason the issue
+      // exists: the school has two reception desks now.
+      //
+      // "A printer keeps its id across an edit" is what the desk's selector
+      // (#436) stands on, and it is only meaningful across a save and a reload
+      // of the real document.
+      //
+      // And the failure path drives the real `IppTicketTransport` (#424)
+      // against a real (absent) host: a widget test runs in fake async, where a
+      // socket's callbacks never arrive at all. No hardware is involved — the
+      // address points at the reserved `.invalid` TLD (RFC 2606), which is
+      // guaranteed never to resolve.
+      useTallWindow(tester);
+
+      // One settings document, the way two reception desks really share one.
+      final InMemorySettingsStore shared = InMemorySettingsStore();
+      final InMemorySecretProvider vault = InMemorySecretProvider(const {});
+
+      Future<void> openDesk() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(AccountManagerApp(
+          session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+          graph: graph,
+          settingsBootstrap: () async =>
+              SettingsServices(store: shared, secrets: vault),
+          connection: ConnectionServices(store: InMemoryConnectionStore()),
+        ));
+        await tester.pumpAndSettle();
+        await tester.tap(railTab('Instellingen'));
+        await tester.pumpAndSettle();
+        await openSettingsTab(tester, 'settings-tab-telaat');
+      }
+
+      Future<void> scrollToPrinters() async {
+        await tester
+            .ensureVisible(find.byKey(const ValueKey('settings-printer-note')));
+        await tester.pumpAndSettle();
+      }
+
+      /// The names the section currently lists, top to bottom.
+      List<String> listed() {
+        final List<String> out = <String>[];
+        for (var i = 0;; i++) {
+          final Finder row = find.byKey(ValueKey('settings-printer-$i'));
+          if (row.evaluate().isEmpty) return out;
+          out.add(tester.widget<Text>(row).data ?? '');
+        }
+      }
+
+      /// Adds one printer the way the administrator does: **Printer
+      /// toevoegen**, then the name / address / header prompt.
+      Future<void> addPrinter(
+        String label,
+        String host, {
+        String header = '',
+      }) async {
+        final Finder add = find.byKey(const ValueKey('settings-printer-add'));
+        await tester.ensureVisible(add);
+        await tester.pumpAndSettle();
+        await tester.tap(add);
+        await tester.pumpAndSettle();
+        // The tap before each `enterText` is not decoration: the dialog
+        // autofocuses the name, and text entered into a field nobody is
+        // listening on goes nowhere.
+        final Map<String, String> fields = <String, String>{
+          'settings-printer-label': label,
+          'settings-printer-host': host,
+          'settings-ticket-header': header,
+        };
+        for (final MapEntry<String, String> field in fields.entries) {
+          if (field.value.isEmpty) continue;
+          await tester.tap(find.byKey(ValueKey(field.key)));
+          await tester.pumpAndSettle();
+          await tester.enterText(find.byKey(ValueKey(field.key)), field.value);
+          await tester.pumpAndSettle();
+        }
+        await tester
+            .tap(find.byKey(const ValueKey('settings-printer-confirm')));
+        await tester.pumpAndSettle();
+      }
+
+      /// Presses **Opslaan** and waits for the shared document to hold
+      /// [expected] printer names, in order.
+      ///
+      /// `_SettingsScreenState._save` is `async` and the store write is behind
+      /// an await, so pumping alone leaves the read below racing it (#425/#426).
+      /// The document itself is the settled signal.
+      Future<void> save(List<String> expected) async {
+        await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+        await tester.tap(find.byKey(const ValueKey('settings-save')));
+        await tester.pumpAndSettle();
+        final DateTime deadline =
+            DateTime.now().add(const Duration(seconds: 15));
+        while (true) {
+          final AppSettings saved = await shared.load();
+          final List<String> names = <String>[
+            for (final TicketPrinter p in saved.ticketPrinters) p.label,
+          ];
+          if (names.join('|') == expected.join('|')) return;
+          if (!DateTime.now().isBefore(deadline)) {
+            fail('timed out waiting for $expected in the shared document, '
+                'saw $names');
+          }
+          await tester.pump(const Duration(milliseconds: 20));
+        }
+      }
+
+      // --- Desk one, on an install nobody has configured. ----------------------
+      await openDesk();
+      // The printers sit with the rest of the "Te laat" configuration on its own
+      // tab (#411), directly under the reason list they are now on a rung with.
+      expect(find.text('Te laat — ticketprinters'), findsOneWidget);
+      await scrollToPrinters();
+      expect(
+        find.byKey(const ValueKey('settings-printer-empty')),
+        findsOneWidget,
+        reason: 'nothing configured yet, which is a state and not a gap',
+      );
+
+      // The note has to make the *shared* rule legible, because until #435 this
+      // same section said the opposite in so many words.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-note')))
+            .data,
+        allOf(
+          contains('gedeeld'),
+          isNot(contains('alleen voor deze computer')),
+          // Since #424 the app prints over IPP on 631, and the note has to say
+          // so: a receptionist reading "poort 9100" would go looking for a raw
+          // print service the printer does not actually run.
+          contains('IPP'),
+          contains('$ippPrintPort'),
+          isNot(contains('9100')),
+          contains('geen Windows-printer'),
+        ),
+      );
+
+      // --- Enter the printer standing at this desk. ----------------------------
+      await addPrinter('Balie 1', 'bonprinter-balie-1.invalid', header: 'SMA');
+      await scrollToPrinters();
+      expect(listed(), <String>['Balie 1']);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-0-host')))
+            .data,
+        'bonprinter-balie-1.invalid',
+      );
+
+      // --- The printer does not answer. ----------------------------------------
+      // The administrator checking the address they just typed. The sentence
+      // they get is the same one a dead printer produces during a scan, and it
+      // has to say that the registration still stands.
+      await tester.tap(find.byKey(const ValueKey('settings-printer-0-test')));
+      final Finder status =
+          find.byKey(const ValueKey('settings-printer-0-status'));
+      // Real DNS, real socket, real timeout: pump until the answer arrives
+      // rather than assuming a frame count.
+      final DateTime printDeadline =
+          DateTime.now().add(const Duration(seconds: 30));
+      while (DateTime.now().isBefore(printDeadline)) {
+        await tester.pump(const Duration(milliseconds: 100));
+        final Iterable<Element> found = status.evaluate();
+        if (found.isNotEmpty &&
+            (tester.widget<Text>(status).data ?? '')
+                .contains('antwoordt niet')) {
+          break;
+        }
+      }
+      await tester.pumpAndSettle();
+
+      final Text failure = tester.widget<Text>(status);
+      expect(
+          failure.data, contains('bonprinter-balie-1.invalid:$ippPrintPort'));
+      expect(failure.data, contains('antwoordt niet'));
+      // The half the operator has to believe before carrying on: a dead printer
+      // costs a piece of paper, never a registration.
+      expect(failure.data, contains('registratie is bewaard'));
+      expect(failure.data, contains('Smartschool'));
+      expect(
+        failure.style?.color,
+        Theme.of(tester.element(status)).colorScheme.error,
+        reason: 'this is the one line on the tab that has to be acted on',
+      );
+
+      await save(<String>['Balie 1']);
+      final String firstId = (await shared.load()).ticketPrinters.single.id;
+      expect(firstId, isNotEmpty);
+
+      // --- Desk two: a different machine, the same shared document. ------------
+      // The whole point of the issue, and the exact reversal of what #406
+      // proved. An operator who works the second desk today — or who brought
+      // her own laptop — finds the printer already there instead of retyping
+      // an IP.
+      await openDesk();
+      await scrollToPrinters();
+      expect(listed(), <String>['Balie 1']);
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-0-host')))
+            .data,
+        'bonprinter-balie-1.invalid',
+      );
+      // The header travels with the printer (#429 moved onto the entry), so a
+      // desk printing on it prints the right school code without a second
+      // setting.
+      expect(find.byKey(const ValueKey('settings-printer-0-header')),
+          findsOneWidget);
+
+      // Desk two adds its own printer, and both desks then have both.
+      await addPrinter('Balie 2', '10.0.0.32', header: 'SSM');
+      await save(<String>['Balie 1', 'Balie 2']);
+
+      // --- Relabelling and re-addressing keeps the id. -------------------------
+      // What #436's selector stands on: a desk stores its choice as an id, so
+      // correcting a name or following a printer onto a new IP must leave that
+      // desk pointed at the same box.
+      await scrollToPrinters();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-0-edit')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-label')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-label')),
+        'Onthaal',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-confirm')));
+      await tester.pumpAndSettle();
+      await save(<String>['Onthaal', 'Balie 2']);
+
+      expect((await shared.load()).ticketPrinters.first.id, firstId);
+      expect(
+        findTicketPrinter((await shared.load()).ticketPrinters, firstId)?.label,
+        'Onthaal',
+      );
+
+      // --- Removing sticks, all the way down to an empty list. -----------------
+      // Deliberately unlike the reason list one section up, where the last
+      // entry cannot be removed because an emptied list re-adopts the shipped
+      // one. "This school hands out no tickets" is a configuration.
+      await openDesk();
+      await scrollToPrinters();
+      expect(listed(), <String>['Onthaal', 'Balie 2']);
+      await tester.tap(find.byKey(const ValueKey('settings-printer-1-remove')));
+      await tester.pumpAndSettle();
+      await save(<String>['Onthaal']);
+
+      await scrollToPrinters();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-0-remove')));
+      await tester.pumpAndSettle();
+      await save(<String>[]);
+
+      // And the empty list is what the next desk finds — not the list coming
+      // quietly back.
+      await openDesk();
+      await scrollToPrinters();
+      expect(
+          find.byKey(const ValueKey('settings-printer-empty')), findsOneWidget);
+      expect(listed(), isEmpty);
+
+      // The shared vocabulary one section up is untouched by any of it: the two
+      // sections are on the same rung now, and both still behave.
+      expect(
+        (await shared.load()).lateArrivalReasons.map((r) => r.label),
+        defaultLateArrivalReasons.map((r) => r.label),
+      );
+
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets(

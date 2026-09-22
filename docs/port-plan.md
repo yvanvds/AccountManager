@@ -313,6 +313,31 @@ holds only UI.
 | Shared, editable list of reasons | #405 | ⬜ |
 | Ticket printing over ESC/POS | #406 | ⬜ |
 | Scan tab UI | #407 | ⬜ |
+| Shared list of named ticket printers | #435 | ⬜ |
+| Printer selector on the scan tab | #436 | ⬜ |
+
+The printer list is **shared, not per-machine** (#435). #406 kept one address
+in each desk's `preferences.json`, on the reasoning that a printer is a box in
+one room; what that missed is that operators are not. The school has two
+reception desks and may get more, so an administrator enters each printer once
+in `AppSettings` — label, address, and the ticket header (#429) that belongs to
+the printer because the printer is what stands at one school — and a desk picks
+one from the list on its own scan tab (#436). Each entry carries a minted id
+that never changes, so relabelling or re-addressing a printer leaves every desk
+that chose it still pointed at the same box. Unlike the reason list there is no
+shipped default and an emptied list is honoured: "this install hands out no
+tickets" is a real configuration, and the scan flow treats it as "no ticket",
+never as a fault.
+
+The **choice** stays machine-local, as the single address it replaces was
+(#406): the printer a desk prints on is a fact about where the laptop is
+standing, not about the school, so it lives in this machine's
+`preferences.json` as `lateArrivalPrinterId` — the entry's id, never its
+address. An administrator correcting an IP after DHCP moved a printer must not
+silently unselect every desk that uses it. The desk follows the shared document
+live, so a printer added or relabelled elsewhere appears without a restart; a
+stored id the list no longer holds falls back to **Geen printer** with a note
+saying so, and is replaced the moment the operator picks again.
 
 Two facts settled by #400 that the package's code and README both restate,
 because getting either wrong marks the wrong child present: the connector's

@@ -215,6 +215,95 @@ void main() {
     });
   });
 
+  group('disposing while tickets are still queued (#436)', () {
+    test('a ticket accepted before dispose still goes out', () async {
+      // The failure this closes, and #436 is what made it reachable at a
+      // counter: the desk's selector replaces this object the moment the
+      // operator picks another printer, so a switch made in the seconds after a
+      // confirmation used to take that student's ticket with it — silently, and
+      // with the registration already on disk saying the ticket had printed.
+      final gate = Completer<void>();
+      final transport = _FakeTransport(gate: gate);
+      final printer = LateArrivalPrinter(
+        host: '10.0.0.31',
+        transport: transport,
+      );
+
+      printer.printRecord(_record());
+      // Nothing has started yet — the queue has not had a turn.
+      expect(transport.sent, isEmpty);
+
+      // The operator switches desks. This object is thrown away mid-queue.
+      printer.dispose();
+      gate.complete();
+      await printer.settled;
+
+      expect(transport.sent, hasLength(1));
+      expect(transport.hosts, <String>['10.0.0.31']);
+      expect(
+        _contains(transport.sent.single, encodeCp1252('Lotte Peeters')),
+        isTrue,
+      );
+    });
+
+    test('a whole queue survives, in order, and on the old address', () async {
+      final gate = Completer<void>();
+      final transport = _FakeTransport(gate: gate);
+      final printer = LateArrivalPrinter(
+        host: '10.0.0.31',
+        transport: transport,
+      );
+
+      for (final String name in <String>['Eerste', 'Tweede', 'Derde']) {
+        printer.printRecord(_record(name: name));
+      }
+      printer.dispose();
+      gate.complete();
+      await printer.settled;
+
+      expect(transport.sent, hasLength(3));
+      expect(_contains(transport.sent[0], encodeCp1252('Eerste')), isTrue);
+      expect(_contains(transport.sent[2], encodeCp1252('Derde')), isTrue);
+    });
+
+    test('nothing new is accepted after dispose', () async {
+      // The other half of the rule: the queue runs out, it does not go on
+      // taking work. A disposed printer is one nobody is looking at any more.
+      final transport = _FakeTransport();
+      final printer = LateArrivalPrinter(
+        host: '10.0.0.31',
+        transport: transport,
+      );
+
+      printer.dispose();
+      printer.printRecord(_record());
+      await printer.settled;
+
+      expect(transport.sent, isEmpty);
+    });
+
+    test('a failure after dispose is swallowed rather than thrown at nobody',
+        () async {
+      // `_report` is the half that stops: the notifier is gone, so a refusal
+      // arriving after dispose must not try to write to it.
+      final gate = Completer<void>();
+      final transport = _FakeTransport(
+        gate: gate,
+        failWith: const SocketException('geen verbinding'),
+      );
+      final printer = LateArrivalPrinter(
+        host: '10.0.0.31',
+        transport: transport,
+      );
+
+      printer.printRecord(_record());
+      printer.dispose();
+      gate.complete();
+
+      await expectLater(printer.settled, completes);
+    });
+  });
+
   group('a printer that is not there', () {
     test('surfaces a clear error naming the address, and does not throw',
         () async {

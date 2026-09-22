@@ -5,7 +5,6 @@ import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
 import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart';
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
-import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -175,7 +174,7 @@ void main() {
     expect(find.byKey(const ValueKey('settings-tab-algemeen-body')),
         findsOneWidget);
     expect(find.text('Te laat — redenen'), findsNothing);
-    expect(find.text('Te laat — ticketprinter'), findsNothing);
+    expect(find.text('Te laat — ticketprinters'), findsNothing);
     expect(find.text('Te laat — Smartschool-aanmelding'), findsNothing);
 
     // The tab sits between Azure and Verbinding — after the connectors, before
@@ -186,12 +185,12 @@ void main() {
         tabX('settings-tab-telaat'), lessThan(tabX('settings-tab-verbinding')));
 
     // And it carries all three, in the order a desk is set up in: the shared
-    // buttons, then this machine's printer, then this person's login.
+    // buttons, then the shared printers (#435), then this person's login.
     await _openLateArrivalTab(tester);
     double sectionY(String title) => tester.getTopLeft(find.text(title)).dy;
     expect(sectionY('Te laat — redenen'),
-        lessThan(sectionY('Te laat — ticketprinter')));
-    expect(sectionY('Te laat — ticketprinter'),
+        lessThan(sectionY('Te laat — ticketprinters')));
+    expect(sectionY('Te laat — ticketprinters'),
         lessThan(sectionY('Te laat — Smartschool-aanmelding')));
   });
 
@@ -2051,302 +2050,387 @@ void main() {
     });
   });
 
-  group('the ticket printer (#406)', () {
-    /// The screen inside a [LocalPreferencesScope], which is where the printer
-    /// address is read from and written to — it is machine-local, not part of
-    /// the shared settings document.
-    Widget wrapWithPreferences(Widget child, LocalPreferences preferences) =>
-        LocalPreferencesScope(
-          preferences: preferences,
-          child: MaterialApp(home: Scaffold(body: child)),
-        );
+  group('the shared ticket-printer list (#435)', () {
+    /// The screen on its own: the printer list is shared configuration now, so
+    /// it comes out of the settings document like the reason list above it and
+    /// needs no [LocalPreferencesScope] at all.
+    Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
-    testWidgets('offers an empty address on a desk that has never printed',
+    /// Adds one printer the way the administrator does: **Printer toevoegen**,
+    /// then the name / address / header prompt.
+    Future<void> addPrinter(
+      WidgetTester tester, {
+      required String label,
+      required String host,
+      String header = '',
+    }) async {
+      final add = find.byKey(const ValueKey('settings-printer-add'));
+      await tester.ensureVisible(add);
+      await tester.pumpAndSettle();
+      await tester.tap(add);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-label')),
+        label,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        host,
+      );
+      if (header.isNotEmpty) {
+        await tester.enterText(
+          find.byKey(const ValueKey('settings-ticket-header')),
+          header,
+        );
+      }
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-confirm')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('an install that has entered none says so and offers an add',
         (WidgetTester tester) async {
       _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
       final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(bootstrap: harness.bootstrap),
-        prefs,
-      ));
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      expect(find.text('Te laat — ticketprinter'), findsOneWidget);
+      // Empty is a state, not a gap: this is every install before an
+      // administrator enters a printer, and the desk registers regardless.
       expect(
-        tester
-            .widget<TextField>(
-                find.byKey(const ValueKey('settings-printer-host')))
-            .controller!
-            .text,
-        '',
-      );
-      // Nothing to reach without an address: the test button says so by being
-      // disabled rather than by failing when pressed.
+          find.byKey(const ValueKey('settings-printer-empty')), findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-printer-0')), findsNothing);
       expect(
-        tester
-            .widget<OutlinedButton>(
-                find.byKey(const ValueKey('settings-printer-test')))
-            .onPressed,
-        isNull,
-      );
-      // The note has to make the machine-local rule legible, because the
-      // section directly above it is the opposite.
+          find.byKey(const ValueKey('settings-printer-add')), findsOneWidget);
+    });
+
+    testWidgets('the note says the list is shared by every desk',
+        (WidgetTester tester) async {
+      // The reversal this issue makes. Until now the section said the address
+      // was for this computer only; the whole point of #435 is that it is not,
+      // and the section has to say so as plainly as the reason list above it.
+      _useTallWindow(tester);
+      final harness = SettingsHarness();
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
       expect(
         tester
             .widget<Text>(find.byKey(const ValueKey('settings-printer-note')))
             .data,
         allOf(
-          contains('alleen voor deze computer'),
+          contains('gedeeld'),
+          isNot(contains('alleen voor deze computer')),
           // The transport, and the port it implies (#424) — never 9100 again.
           contains('IPP'),
           contains('$ippPrintPort'),
           isNot(contains('9100')),
         ),
       );
+      expect(find.text('Te laat — ticketprinters'), findsOneWidget);
     });
 
-    testWidgets('populates the address this machine remembered',
+    testWidgets('lists the printers the shared document holds',
         (WidgetTester tester) async {
       _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
-      await prefs.setLateArrivalPrinterHost('10.0.0.31');
-      final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(bootstrap: harness.bootstrap),
-        prefs,
-      ));
+      final harness = SettingsHarness(
+        initial: const AppSettings(ticketPrinters: <TicketPrinter>[
+          TicketPrinter(
+              id: 'p1', label: 'Balie A', host: '10.0.1.20', header: 'SMA'),
+          TicketPrinter(id: 'p2', label: 'Balie B', host: '10.0.1.21'),
+        ]),
+      );
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      expect(find.text('10.0.0.31'), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('settings-printer-empty')), findsNothing);
       expect(
         tester
-            .widget<OutlinedButton>(
-                find.byKey(const ValueKey('settings-printer-test')))
-            .onPressed,
-        isNotNull,
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-0')))
+            .data,
+        'Balie A',
       );
+      // The address is on the row rather than behind Bewerken: a typo in an IP
+      // is the likeliest reason a desk does not print, and it has to be
+      // spottable without opening every entry.
+      expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('settings-printer-0-host')))
+            .data,
+        '10.0.1.20',
+      );
+      expect(find.byKey(const ValueKey('settings-printer-0-header')),
+          findsOneWidget);
+      // No header on the second one, so no badge to mislead.
+      expect(find.byKey(const ValueKey('settings-printer-1-header')),
+          findsNothing);
     });
 
-    testWidgets('Opslaan writes it to this machine, not to the shared document',
-        (WidgetTester tester) async {
-      // The whole point of the placement decision: two reception desks have two
-      // printers, so this must not travel to the other desk the way the reason
-      // list deliberately does.
+    testWidgets(
+        'Opslaan writes the list to the shared document, not to disk '
+        'here', (WidgetTester tester) async {
+      // The reversal of #406 in one assertion: this is exactly what used to be
+      // forbidden to travel, and now has to.
       _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
       final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(bootstrap: harness.bootstrap),
-        prefs,
-      ));
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-printer-host')),
-        '10.0.0.31',
-      );
-      await tester.pump();
+      await addPrinter(tester,
+          label: 'Balie A', host: '10.0.1.20', header: 'SMA');
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
       await tester.tap(find.byKey(const ValueKey('settings-save')));
       await tester.pumpAndSettle();
 
-      expect(prefs.lateArrivalPrinterHost, '10.0.0.31');
-      // Nothing about a printer reached the document every desk reads.
       final AppSettings saved = await harness.store.load();
-      expect(saved.toJson().toString(), isNot(contains('10.0.0.31')));
+      expect(saved.ticketPrinters, hasLength(1));
+      expect(saved.ticketPrinters.single.label, 'Balie A');
+      expect(saved.ticketPrinters.single.host, '10.0.1.20');
+      expect(saved.ticketPrinters.single.header, 'SMA');
+      // Minted, opaque, and not something the operator typed.
+      expect(saved.ticketPrinters.single.id, hasLength(ticketPrinterIdLength));
     });
 
-    testWidgets('the ticket header is this desk\'s too (#429)',
+    testWidgets('an entry keeps its id across a relabel and a re-address',
         (WidgetTester tester) async {
-      // A desk prints for one school; the code at the top of its tickets must
-      // not travel to the desk at the next school.
+      // What the desk's selector stands on (#436). A desk stores its choice as
+      // an id, so correcting a name or following a printer onto a new IP must
+      // leave that desk pointed at the same box.
       _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
-      await prefs.setLateArrivalTicketHeader('SMA');
-      final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(bootstrap: harness.bootstrap),
-        prefs,
-      ));
+      final harness = SettingsHarness(
+        initial: const AppSettings(ticketPrinters: <TicketPrinter>[
+          TicketPrinter(id: 'stable-id', label: 'Balie A', host: '10.0.1.20'),
+        ]),
+      );
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      // Populated from what this machine remembered…
-      expect(find.text('SMA'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('settings-printer-0-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-label')),
+        'Onthaal',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-host')),
+        '10.0.1.99',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-confirm')));
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      final AppSettings saved = await harness.store.load();
+      expect(saved.ticketPrinters.single.id, 'stable-id');
+      expect(saved.ticketPrinters.single.label, 'Onthaal');
+      expect(saved.ticketPrinters.single.host, '10.0.1.99');
+    });
+
+    testWidgets('a printer with no address cannot be added',
+        (WidgetTester tester) async {
+      // `normalizeTicketPrinters` would drop it on save, so letting it in would
+      // be a row that silently vanished.
+      _useTallWindow(tester);
+      final harness = SettingsHarness();
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      await tester.tap(find.byKey(const ValueKey('settings-printer-add')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('settings-printer-label')),
+        'Balie A',
+      );
+      await tester.pump();
+
+      expect(
+        tester
+            .widget<FilledButton>(
+                find.byKey(const ValueKey('settings-printer-confirm')))
+            .onPressed,
+        isNull,
+      );
+    });
+
+    testWidgets('the header field is capped at what fits the paper (#429)',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final harness = SettingsHarness();
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      await tester.tap(find.byKey(const ValueKey('settings-printer-add')));
+      await tester.pumpAndSettle();
+
+      final TextField field = tester.widget<TextField>(
+        find.byKey(const ValueKey('settings-ticket-header')),
+      );
+      expect(field.maxLength, ticketHeaderMaxLength);
+      // And the prompt says the header belongs to the printer, not to the
+      // machine — the #429 reversal this issue makes.
       expect(
         tester
             .widget<Text>(
                 find.byKey(const ValueKey('settings-ticket-header-note')))
             .data,
-        contains('alleen voor deze computer'),
+        allOf(
+          contains('deze printer'),
+          isNot(contains('alleen voor deze computer')),
+        ),
       );
-
-      // …capped at what fits the paper…
-      final TextField field = tester.widget<TextField>(
-        find.byKey(const ValueKey('settings-ticket-header')),
-      );
-      expect(field.maxLength, ticketHeaderMaxLength);
-
-      // …and saved back here, not to the shared document.
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-ticket-header')),
-        ' SSM ',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('settings-save')));
-      await tester.pumpAndSettle();
-
-      expect(prefs.lateArrivalTicketHeader, 'SSM');
-      final AppSettings saved = await harness.store.load();
-      expect(saved.toJson().toString(), isNot(contains('SSM')));
     });
 
-    testWidgets('clearing the header prints a ticket without one',
+    testWidgets('removing the last printer is allowed and sticks',
         (WidgetTester tester) async {
+      // Deliberately unlike the reason list, where the last entry cannot be
+      // removed because an empty list re-adopts the shipped one. An emptied
+      // printer list is honoured: "this school hands out no tickets" is a
+      // configuration.
       _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
-      await prefs.setLateArrivalTicketHeader('SMA');
-      final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(bootstrap: harness.bootstrap),
-        prefs,
-      ));
+      final harness = SettingsHarness(
+        initial: const AppSettings(ticketPrinters: <TicketPrinter>[
+          TicketPrinter(id: 'p1', label: 'Balie A', host: '10.0.1.20'),
+        ]),
+      );
+      await tester
+          .pumpWidget(wrap(SettingsScreen(bootstrap: harness.bootstrap)));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-ticket-header')),
-        '',
-      );
-      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('settings-printer-0-remove')));
+      await tester.pumpAndSettle();
+      expect(
+          find.byKey(const ValueKey('settings-printer-empty')), findsOneWidget);
+
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
       await tester.tap(find.byKey(const ValueKey('settings-save')));
       await tester.pumpAndSettle();
 
-      expect(prefs.lateArrivalTicketHeader, isNull);
+      expect((await harness.store.load()).ticketPrinters, isEmpty);
     });
 
-    testWidgets('clearing the address switches printing off here',
-        (WidgetTester tester) async {
-      _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
-      await prefs.setLateArrivalPrinterHost('10.0.0.31');
-      final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(bootstrap: harness.bootstrap),
-        prefs,
-      ));
-      await tester.pumpAndSettle();
-      await _openLateArrivalTab(tester);
-
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-printer-host')),
-        '   ',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('settings-save')));
-      await tester.pumpAndSettle();
-
-      expect(prefs.lateArrivalPrinterHost, isNull);
-    });
-
-    testWidgets('a printer that does not answer is reported in place',
+    testWidgets('a printer that does not answer is reported under its own row',
         (WidgetTester tester) async {
       // The error surface, without a network: a `testWidgets` body runs in fake
       // async, so a real socket's callbacks would never arrive. The full-app run
       // drives the real transport; this drives the wiring around it.
       _useTallWindow(tester);
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
-      final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(
-          bootstrap: harness.bootstrap,
-          ticketTransport: _RefusingTransport(),
-        ),
-        prefs,
-      ));
+      final harness = SettingsHarness(
+        initial: const AppSettings(ticketPrinters: <TicketPrinter>[
+          TicketPrinter(id: 'p1', label: 'Balie A', host: '10.0.1.20'),
+          TicketPrinter(id: 'p2', label: 'Balie B', host: '10.0.1.21'),
+        ]),
+      );
+      await tester.pumpWidget(wrap(SettingsScreen(
+        bootstrap: harness.bootstrap,
+        ticketTransport: _RefusingTransport(),
+      )));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-printer-host')),
-        '10.0.0.31',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+      await tester.tap(find.byKey(const ValueKey('settings-printer-1-test')));
       await tester.pumpAndSettle();
 
+      // Under the row that was tested, and nowhere else: with a list, an
+      // outcome shown under the wrong printer is worse than none at all.
       final Text status = tester.widget<Text>(
-        find.byKey(const ValueKey('settings-printer-status')),
+        find.byKey(const ValueKey('settings-printer-1-status')),
       );
-      expect(status.data, contains('10.0.0.31:$ippPrintPort'));
+      expect(status.data, contains('10.0.1.21:$ippPrintPort'));
       expect(status.data, contains('antwoordt niet'));
+      expect(
+        find.byKey(const ValueKey('settings-printer-0-status')),
+        findsNothing,
+      );
       // …and it says so in the error colour, because this is the one line on
       // the tab the operator has to act on.
       final ColorScheme colors = Theme.of(
-        tester.element(find.byKey(const ValueKey('settings-printer-status'))),
+        tester.element(find.byKey(const ValueKey('settings-printer-1-status'))),
       ).colorScheme;
       expect(status.style?.color, colors.error);
     });
 
-    testWidgets('a test print that lands sends a real ticket and says so',
+    testWidgets('a test print sends a real ticket with that row\'s header',
         (WidgetTester tester) async {
       _useTallWindow(tester);
       final transport = _RecordingTransport();
-      final prefs = LocalPreferences.inMemory();
-      await prefs.load();
-      final harness = SettingsHarness();
-      await tester.pumpWidget(wrapWithPreferences(
-        SettingsScreen(
-          bootstrap: harness.bootstrap,
-          ticketTransport: transport,
-        ),
-        prefs,
-      ));
+      final harness = SettingsHarness(
+        initial: const AppSettings(ticketPrinters: <TicketPrinter>[
+          TicketPrinter(
+              id: 'p1', label: 'Balie A', host: '10.0.1.20', header: 'SMA'),
+          TicketPrinter(
+              id: 'p2', label: 'Balie B', host: '10.0.1.21', header: 'SSM'),
+        ]),
+      );
+      await tester.pumpWidget(wrap(SettingsScreen(
+        bootstrap: harness.bootstrap,
+        ticketTransport: transport,
+      )));
       await tester.pumpAndSettle();
       await _openLateArrivalTab(tester);
 
-      // The address and the header as typed, not the saved ones: the operator
-      // has to be able to try a value before committing it.
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-printer-host')),
-        '10.0.0.31',
-      );
-      await tester.enterText(
-        find.byKey(const ValueKey('settings-ticket-header')),
-        'SMA',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('settings-printer-test')));
+      await tester.tap(find.byKey(const ValueKey('settings-printer-1-test')));
       await tester.pumpAndSettle();
 
-      expect(prefs.lateArrivalPrinterHost, isNull,
-          reason: 'a test print is not a save');
-      expect(prefs.lateArrivalTicketHeader, isNull,
-          reason: 'a test print is not a save');
-      expect(transport.hosts, <String>['10.0.0.31']);
+      expect(transport.hosts, <String>['10.0.1.21']);
       expect(transport.ports, <int>[ippPrintPort]);
       // A real ticket, header and cut and all — the same bytes a late student
-      // would get.
+      // would get, and *this* printer's header rather than the first one's.
       final List<int> bytes = transport.sent.single;
       expect(bytes.sublist(0, 2), escPosInitialize());
-      expect(bytes, containsAllInOrder(encodeCp1252('SMA')));
+      expect(bytes, containsAllInOrder(encodeCp1252('SSM')));
+      expect(bytes, isNot(containsAllInOrder(encodeCp1252('SMA'))));
       expect(bytes.sublist(bytes.length - escPosCut().length), escPosCut());
       expect(
         tester
-            .widget<Text>(find.byKey(const ValueKey('settings-printer-status')))
+            .widget<Text>(
+                find.byKey(const ValueKey('settings-printer-1-status')))
             .data,
-        contains('10.0.0.31:$ippPrintPort'),
+        contains('10.0.1.21:$ippPrintPort'),
       );
+    });
+
+    testWidgets('a test print on an unsaved row uses what was just typed',
+        (WidgetTester tester) async {
+      // The operator has to be able to try a printer before committing the tab,
+      // exactly as the single-address field allowed — and a test print is still
+      // not a save.
+      _useTallWindow(tester);
+      final transport = _RecordingTransport();
+      final harness = SettingsHarness();
+      await tester.pumpWidget(wrap(SettingsScreen(
+        bootstrap: harness.bootstrap,
+        ticketTransport: transport,
+      )));
+      await tester.pumpAndSettle();
+      await _openLateArrivalTab(tester);
+
+      await addPrinter(tester,
+          label: 'Balie A', host: '10.0.1.20', header: 'SMA');
+      await tester.tap(find.byKey(const ValueKey('settings-printer-0-test')));
+      await tester.pumpAndSettle();
+
+      expect(transport.hosts, <String>['10.0.1.20']);
+      expect((await harness.store.load()).ticketPrinters, isEmpty,
+          reason: 'a test print is not a save');
     });
   });
 
