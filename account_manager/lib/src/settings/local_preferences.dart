@@ -214,16 +214,52 @@ class LocalPreferences {
 
   static const String _releaseNotesSeenVersionKey = 'releaseNotesSeenVersion';
 
-  // The ticket printer this desk prints on used to live here (#406), with the
-  // ticket header beside it (#429). Both moved into the shared settings
-  // document as a list of named printers (#435): an operator who works a
-  // different desk today, or who brings her own laptop, picks a printer rather
-  // than retyping an IP, and the header travels with the printer because the
-  // thing that stands at one school is the printer and not the machine. A
-  // `lateArrivalPrinterHost` or `lateArrivalTicketHeader` still sitting in an
-  // older `preferences.json` is simply an unread key — the bag preserves what
-  // it does not understand — and nothing migrates it: the late-arrival flow is
-  // not in production use yet.
+  /// Which of the shared ticket printers (#435) this desk prints on (#436) —
+  /// the entry's stable `TicketPrinter.id`, never its address.
+  ///
+  /// **Machine-local, exactly as the single address it replaces was** (#406).
+  /// The printer a desk prints on is a fact about where this machine is
+  /// standing — "the one next to me right now" — not about the school, so it
+  /// stays out of the shared document, and an office laptop that never picks
+  /// one honestly prints nothing.
+  ///
+  /// **What changed is *what* is stored.** #406 kept the address here; the
+  /// header (#429) sat beside it. Both now ride on the shared entry, and this
+  /// machine keeps only the choice. An id survives an administrator correcting
+  /// a label or following a printer onto a new IP after DHCP moved it — an
+  /// address would silently unselect every desk that used that printer.
+  ///
+  /// `null` is a machine that has not chosen, or one whose operator picked
+  /// **Geen printer**: the honest "no ticket comes out" state, never a fault.
+  /// An id that no longer appears in the shared list reads back unchanged —
+  /// the scan tab is what notices and says so, and the next choice replaces it.
+  ///
+  /// A `lateArrivalPrinterHost` or `lateArrivalTicketHeader` still sitting in
+  /// an older `preferences.json` is simply an unread key — the bag preserves
+  /// what it does not understand — and nothing migrates it: the late-arrival
+  /// flow is not in production use yet.
+  String? get lateArrivalPrinterId {
+    final Object? raw = _values[_lateArrivalPrinterIdKey];
+    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
+  }
+
+  /// Remembers [id] as the printer this machine prints on, or clears the
+  /// choice when it is `null` or blank.
+  ///
+  /// Clearing is what **Geen printer** stores, and it is also how a stale id —
+  /// one naming a printer that has since been removed from the shared list —
+  /// leaves the bag: the moment the operator picks anything else, the id that
+  /// no longer resolves is overwritten rather than left to be re-reported on
+  /// every launch.
+  Future<void> setLateArrivalPrinterId(String? id) {
+    final String? clean = id?.trim();
+    return _set(
+      _lateArrivalPrinterIdKey,
+      clean == null || clean.isEmpty ? null : clean,
+    );
+  }
+
+  static const String _lateArrivalPrinterIdKey = 'lateArrivalPrinterId';
 
   // --- the bag ---------------------------------------------------------------
 

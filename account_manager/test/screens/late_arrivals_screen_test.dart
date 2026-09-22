@@ -42,9 +42,11 @@ class _CountingBeep implements RefusalBeep {
   void play() => played++;
 }
 
-/// Keeps every ticket that reached "the printer".
+/// Keeps every ticket that reached "the printer", and the address it was
+/// addressed to — which is what a desk's printer selection (#436) decides.
 class _RecordingTransport implements TicketTransport {
   final List<List<int>> sent = <List<int>>[];
+  final List<String> hosts = <String>[];
 
   @override
   Future<void> send({
@@ -53,6 +55,7 @@ class _RecordingTransport implements TicketTransport {
     required List<int> bytes,
     required Duration timeout,
   }) async {
+    hosts.add(host);
     sent.add(List<int>.of(bytes));
   }
 }
@@ -120,6 +123,44 @@ LiveSettings _liveWithPrinter(String host, {String header = ''}) =>
         header: header,
       ),
     ]));
+
+/// This machine's preferences with [id] already chosen as the printer this desk
+/// prints on (#436) — a desk that was configured on some earlier day, which is
+/// what every desk in use is.
+///
+/// Passing no id is a machine nobody has pointed at a printer yet: the honest
+/// state of a fresh install, and the one where no ticket comes out.
+Future<LocalPreferences> _prefsWithPrinter([String? id]) async {
+  final LocalPreferences preferences = LocalPreferences(
+    InMemoryLocalPreferenceStore(<String, Object?>{
+      if (id != null) 'lateArrivalPrinterId': id,
+    }),
+  );
+  await preferences.load();
+  return preferences;
+}
+
+/// Opens the printer menu and picks the entry keyed [option] — the whole
+/// gesture, including the frame the menu route needs to settle.
+Future<void> _pickPrinter(WidgetTester tester, String option) async {
+  await tester.ensureVisible(
+    find.byKey(const ValueKey<String>('late-printer-select')),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey<String>('late-printer-select')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(ValueKey<String>('late-printer-option-$option')));
+  await tester.pumpAndSettle();
+}
+
+/// What the selector currently shows as this desk's printer.
+String _selectedPrinter(WidgetTester tester) =>
+    tester
+        .widget<Text>(
+          find.byKey(const ValueKey<String>('late-printer-selected')),
+        )
+        .data ??
+    '';
 
 Widget _wrap({
   required LateArrivalDesk desk,
@@ -268,6 +309,9 @@ void main() {
 
     await tester.pumpWidget(_wrap(
       desk: desk,
+      // A desk that picked its printer on some earlier day (#436) — which is
+      // what every desk in use is, and the state a ticket comes out of.
+      preferences: await _prefsWithPrinter('balie-printer'),
       child: LateArrivalsScreen(
         bootstrap: _harness(
           live: _liveWithPrinter('bonprinter.invalid', header: 'SMA'),
@@ -606,6 +650,295 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(desk.journal!.records, hasLength(1));
+  });
+
+  group('the printer this desk prints on (#436)', () {
+    /// Two named printers in the shared document, at two desks, with two
+    /// school codes on their tickets — the configuration this whole slice
+    /// exists for.
+    LiveSettings twoPrinters() =>
+        LiveSettings(const AppSettings(ticketPrinters: <TicketPrinter>[
+          TicketPrinter(
+            id: 'p-onthaal',
+            label: 'Onthaal',
+            host: 'bon-onthaal.invalid',
+            header: 'SMA',
+          ),
+          TicketPrinter(
+            id: 'p-toren',
+            label: 'Toren',
+            host: 'bon-toren.invalid',
+            header: 'SMT',
+          ),
+        ]));
+
+    testWidgets(
+        'the selector lists every shared printer by label, binds the one the '
+        'operator picks and remembers it on this machine',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final _RecordingTransport tickets = _RecordingTransport();
+      final LocalPreferences preferences = await _prefsWithPrinter();
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        preferences: preferences,
+        child: LateArrivalsScreen(
+          bootstrap: _harness(live: twoPrinters()).bootstrap,
+          ticketTransport: tickets,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // Nothing chosen yet: an install nobody has pointed at a printer.
+      expect(_selectedPrinter(tester), 'Geen printer');
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('late-printer-select')),
+      );
+      await tester.pumpAndSettle();
+      // Every entry, by label, in the shared list's order — plus the way out.
+      expect(
+        find.byKey(const ValueKey<String>('late-printer-option-none')),
+        findsOneWidget,
+      );
+      final double onthaalY = tester
+          .getTopLeft(
+            find.byKey(const ValueKey<String>('late-printer-option-p-onthaal')),
+          )
+          .dy;
+      final double torenY = tester
+          .getTopLeft(
+            find.byKey(const ValueKey<String>('late-printer-option-p-toren')),
+          )
+          .dy;
+      expect(onthaalY, lessThan(torenY));
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('late-printer-option-p-toren')),
+      );
+      await tester.pumpAndSettle();
+      expect(_selectedPrinter(tester), 'Toren');
+
+      // Bound immediately: the very next ticket goes to that printer, with the
+      // header that rides on the entry (#429).
+      await _scan(tester, '123456');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(tickets.hosts, <String>['bon-toren.invalid']);
+      expect(tickets.sent.single, containsAllInOrder(encodeCp1252('SMT')));
+
+      // …and it is the *id* that was written to this machine, so an
+      // administrator moving that printer to a new IP cannot unselect the desk.
+      expect(preferences.lateArrivalPrinterId, 'p-toren');
+      expect(
+        jsonEncode(await preferences.store.read()),
+        isNot(contains('bon-toren.invalid')),
+      );
+
+      // Switching rebinds, and re-remembers.
+      await _pickPrinter(tester, 'p-onthaal');
+      await _scan(tester, '223344');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(tickets.hosts.last, 'bon-onthaal.invalid');
+      expect(preferences.lateArrivalPrinterId, 'p-onthaal');
+    });
+
+    testWidgets(
+        'a re-addressed printer is rebound on the next document update, with '
+        'the desk still selected', (WidgetTester tester) async {
+      // The reason the choice is stored as an id: DHCP moved the box, an
+      // administrator corrected the address in Instellingen, and no desk had to
+      // be touched.
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final _RecordingTransport tickets = _RecordingTransport();
+      final LiveSettings live = twoPrinters();
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        preferences: await _prefsWithPrinter('p-toren'),
+        child: LateArrivalsScreen(
+          bootstrap: _harness(live: live).bootstrap,
+          ticketTransport: tickets,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      expect(_selectedPrinter(tester), 'Toren');
+
+      live.publish(const AppSettings(ticketPrinters: <TicketPrinter>[
+        TicketPrinter(
+          id: 'p-onthaal',
+          label: 'Onthaal',
+          host: 'bon-onthaal.invalid',
+          header: 'SMA',
+        ),
+        // Same entry, same id — new address, and a corrected label besides.
+        TicketPrinter(
+          id: 'p-toren',
+          label: 'Toren (gang)',
+          host: '10.1.2.9',
+          header: 'SMT',
+        ),
+      ]));
+      await tester.pumpAndSettle();
+
+      expect(_selectedPrinter(tester), 'Toren (gang)');
+      await _scan(tester, '123456');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(tickets.hosts, <String>['10.1.2.9']);
+    });
+
+    testWidgets(
+        'a stored printer that was removed falls back to Geen printer, says '
+        'so, and the stale id is gone once the operator picks again',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final _RecordingTransport tickets = _RecordingTransport();
+      final LocalPreferences preferences = await _prefsWithPrinter('p-weg');
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        preferences: preferences,
+        child: LateArrivalsScreen(
+          bootstrap: _harness(live: twoPrinters()).bootstrap,
+          ticketTransport: tickets,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The operator finds out now, not when the first ticket fails to come
+      // out.
+      expect(_selectedPrinter(tester), 'Geen printer');
+      expect(
+        _textOf(
+          tester,
+          find.byKey(const ValueKey<String>('late-printer-note')),
+        ),
+        contains('De gekozen printer bestaat niet meer'),
+      );
+
+      // Registrations are untouched by it — nothing printed, nothing lost.
+      await _scan(tester, '123456');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(desk.journal!.records, hasLength(1));
+      expect(tickets.sent, isEmpty);
+
+      await _pickPrinter(tester, 'p-onthaal');
+      expect(preferences.lateArrivalPrinterId, 'p-onthaal');
+      expect(
+        find.byKey(const ValueKey<String>('late-printer-note')),
+        findsNothing,
+        reason: 'the complaint goes away with the thing it complained about',
+      );
+    });
+
+    testWidgets(
+        'an empty shared list leaves the selector disabled and points at '
+        'Instellingen', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester
+            .widget<PopupMenuButton<String>>(
+              find.byKey(const ValueKey<String>('late-printer-select')),
+            )
+            .enabled,
+        isFalse,
+      );
+      expect(
+        _textOf(
+          tester,
+          find.byKey(const ValueKey<String>('late-printer-note')),
+        ),
+        allOf(
+          contains('nog geen ticketprinters ingesteld'),
+          contains('Instellingen → Te laat'),
+        ),
+      );
+    });
+
+    testWidgets(
+        'Geen printer registers without printing, and the keyboard comes '
+        'straight back to the scanner', (WidgetTester tester) async {
+      // The focus is the whole reason this control is a menu and not a
+      // dropdown: a scan tab that stopped reclaiming swallows the next badge
+      // with no error, no ticket and no record.
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final _RecordingTransport tickets = _RecordingTransport();
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        preferences: await _prefsWithPrinter('p-toren'),
+        child: LateArrivalsScreen(
+          bootstrap: _harness(live: twoPrinters()).bootstrap,
+          ticketTransport: tickets,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await _pickPrinter(tester, 'none');
+      expect(_selectedPrinter(tester), 'Geen printer');
+      expect(
+        tester
+                .widget<Text>(find.descendant(
+                  of: _indicator,
+                  matching: find.byType(Text),
+                ))
+                .data ??
+            '',
+        'KLAAR OM TE SCANNEN',
+      );
+
+      // And it is really back: the next burst lands without a click.
+      await _scan(tester, '123456');
+      expect(_textOf(tester, _name), 'Jonas Peeters');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(desk.journal!.records, hasLength(1));
+      expect(tickets.sent, isEmpty);
+    });
+
+    testWidgets(
+        'dismissing the menu without choosing hands the keyboard back too',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        preferences: await _prefsWithPrinter('p-toren'),
+        child: LateArrivalsScreen(
+          bootstrap: _harness(live: twoPrinters()).bootstrap,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const ValueKey<String>('late-printer-select')),
+      );
+      await tester.pumpAndSettle();
+      // Escape, the way an operator who opened it by accident gets out.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(_selectedPrinter(tester), 'Toren');
+      await _scan(tester, '123456');
+      expect(_textOf(tester, _name), 'Jonas Peeters');
+    });
   });
 
   testWidgets(

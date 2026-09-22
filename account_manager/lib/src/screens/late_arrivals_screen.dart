@@ -3,7 +3,8 @@
 /// The last slice of the late-arrival epic (#399) and the one that consumes all
 /// the others: the scan resolver (#401), the journal (#402), the Cosmos mirror
 /// (#403), the Smartschool drain (#404), the shared reason list (#405) and the
-/// ticket printer (#406) all meet here, in front of a queue of students.
+/// ticket printer (#406) — one of the shared list (#435) this desk selected
+/// (#436) — all meet here, in front of a queue of students.
 ///
 /// Everything on this screen is shaped by one measurement: how long a student
 /// stands at the desk. That is why:
@@ -61,6 +62,7 @@ import '../late_arrivals/late_arrival_printer.dart';
 import '../late_arrivals/reason_button_row.dart';
 import '../late_arrivals/refusal_beep.dart';
 import '../reconcile/reconcile_bootstrap.dart';
+import '../settings/local_preferences.dart';
 import '../shell/shell_navigation.dart';
 
 /// How long a pause between two keystrokes starts a fresh code.
@@ -161,6 +163,26 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   String _printerHeader = '';
   bool _printerBound = false;
 
+  /// The shared printer list as last published (#435) — what the selector
+  /// lists, and what a stored id is resolved against.
+  List<TicketPrinter> _printers = const <TicketPrinter>[];
+
+  /// The printer this desk selected (#436) by [TicketPrinter.id], or `null`
+  /// for **Geen printer**. Read from, and written straight back to, this
+  /// machine's own preferences.
+  String? _printerId;
+
+  /// This machine's remembered answers, or `null` when this screen is pumped
+  /// without a [LocalPreferencesScope] — a widget test, where the selection
+  /// then lives for the run and is forgotten, which is what it should do.
+  LocalPreferences? _preferences;
+
+  /// Whether the printer menu is open.
+  ///
+  /// The one moment this screen deliberately does *not* hold the keyboard: see
+  /// [_printerSelector].
+  bool _picking = false;
+
   /// Whether this is the destination the operator is looking at.
   ///
   /// The shell keeps visited screens mounted, so without this the scan tab would
@@ -184,6 +206,18 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     // and that a registration was written.
     _desk = LateArrivalDeskScope.maybeOf(context);
     _watchDrain(_desk?.drain);
+
+    // Which printer this desk prints on is remembered per machine (#436), so
+    // it is in hand before the shared list arrives: the id is adopted here and
+    // resolved against whatever `_bindPrinter` is later handed.
+    final LocalPreferences? preferences = LocalPreferencesScope.maybeOf(
+      context,
+    );
+    if (!identical(preferences, _preferences)) {
+      _preferences = preferences;
+      _printerId = preferences?.lateArrivalPrinterId;
+      _bindPrinter(_printers);
+    }
 
     final ShellTab? tab = ShellNavigation.maybeOf(context)?.current;
     final bool visible = tab == null || tab == ShellTab.teLaat;
@@ -268,7 +302,9 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   }
 
   /// Adopts everything this screen reads out of the shared document: the reason
-  /// buttons (#405) and the printer the tickets go to (#435).
+  /// buttons (#405) and the list of printers this desk picks one from (#435,
+  /// #436). Both follow the document live, so an edit made at another desk
+  /// takes effect here without a restart.
   void _adoptSettings(AppSettings settings) {
     _adoptReasonList(settings.lateArrivalReasons);
     _bindPrinter(settings.ticketPrinters);
@@ -296,21 +332,24 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     });
   }
 
-  /// Binds the printer this desk's tickets go to, out of the shared list
-  /// (#435), and rebinds it whenever an administrator edits that list in
-  /// Instellingen.
+  /// Binds the printer this desk's tickets go to: the entry the operator
+  /// selected (#436), looked up by id in the shared list (#435).
   ///
-  /// **The first entry, for now.** Which printer *this* desk prints on is a
-  /// per-machine choice the operator makes on this tab, and that selector is
-  /// #436 — the very next slice. Until it lands, a desk prints on the first
-  /// printer in the shared list, which is the right answer for the school as it
-  /// stands today (one list, entered in the order the desks were set up) and
-  /// the honest "no ticket" for an install that has entered none. An empty host
-  /// is not a fault: [LateArrivalPrinter] reports it as
-  /// [LateArrivalPrintState.disabled], exactly as an unconfigured machine did
-  /// before.
+  /// Called from both sides of that pair — whenever the shared document is
+  /// published, and whenever the selection changes — because either can move
+  /// the address under a desk that changed nothing. An administrator who
+  /// follows a printer onto a new IP re-addresses *the same entry*, so the
+  /// desks that selected it rebind silently and stay selected; that is the
+  /// whole reason the choice is stored as an id and not as a host.
+  ///
+  /// No selection, or one naming an entry that is no longer in the list,
+  /// yields an empty host, and an empty host is not a fault:
+  /// [LateArrivalPrinter] reports it as [LateArrivalPrintState.disabled] and
+  /// registrations carry on being written. The two cases read differently to
+  /// the operator, though, and [_notes] is where they are told apart.
   void _bindPrinter(List<TicketPrinter> printers) {
-    final TicketPrinter? chosen = printers.isEmpty ? null : printers.first;
+    _printers = printers;
+    final TicketPrinter? chosen = findTicketPrinter(printers, _printerId);
     final String host = chosen?.host ?? '';
     final String header = chosen?.header ?? '';
     if (_printerBound && _printerHost == host && _printerHeader == header) {
@@ -327,6 +366,40 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     );
   }
 
+  /// Whether this desk's stored choice names a printer the shared list no
+  /// longer holds — the administrator removed it while this desk was open, or
+  /// between two launches.
+  ///
+  /// Only meaningful with printers to choose from: an empty list has its own,
+  /// more useful sentence, and reporting both would hide it.
+  bool get _printerMissing =>
+      _printers.isNotEmpty &&
+      _printerId != null &&
+      findTicketPrinter(_printers, _printerId) == null;
+
+  /// Adopts the operator's pick: rebinds the printer and remembers it on this
+  /// machine, then hands the keyboard straight back to the scanner.
+  ///
+  /// The empty string is **Geen printer** — a [PopupMenuButton] treats a `null`
+  /// result as a dismissal, so "nothing" needs a value of its own.
+  void _selectPrinter(String id) {
+    _picking = false;
+    final String? chosen = id.trim().isEmpty ? null : id.trim();
+    if (chosen != _printerId) {
+      setState(() {
+        _printerId = chosen;
+        _bindPrinter(_printers);
+      });
+      // Best effort and never awaited: a preference file that cannot be written
+      // costs this desk its choice at the next launch and nothing today. A
+      // stale id is overwritten by this same write — that is how it is cleared.
+      unawaited(
+        _preferences?.setLateArrivalPrinterId(chosen) ?? Future<void>.value(),
+      );
+    }
+    _reclaimFocus();
+  }
+
   // ---------------------------------------------------------------------------
   // Focus
   // ---------------------------------------------------------------------------
@@ -341,10 +414,16 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   /// Deferred rather than immediate because this runs from a focus notification
   /// and from [didChangeDependencies], neither of which may re-enter the focus
   /// manager mid-walk.
+  ///
+  /// [_picking] is the one thing that holds it off, and only for as long as the
+  /// printer menu is open (#436): that menu is a route of its own, above this
+  /// screen, and a reclaim firing into it would yank the keyboard out from
+  /// under a menu the operator is still reading. It is handed back the instant
+  /// the menu closes, picked or dismissed — see [_printerSelector].
   void _reclaimFocus() {
-    if (!mounted || !_visible || _scanner.hasFocus) return;
+    if (!mounted || !_visible || _picking || _scanner.hasFocus) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_visible || _scanner.hasFocus) return;
+      if (!mounted || !_visible || _picking || _scanner.hasFocus) return;
       _scanner.requestFocus();
     });
   }
@@ -832,8 +911,29 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       ));
     }
 
+    // The printer this desk prints on (#436): the selector, then the single
+    // sentence worth saying about what it is currently pointed at.
+    notes.add(_printerSelector(context));
+
+    // Two states the printer itself cannot report, because from its side both
+    // are simply "no host". They are told apart here, and they replace the
+    // printer's own note rather than stacking on top of it — one note per
+    // subject, and this one is more specific than "nothing is printed".
+    final String selection = _printers.isEmpty
+        ? 'Er zijn nog geen ticketprinters ingesteld, dus er worden geen '
+            'tickets afgedrukt. Voeg er een toe bij Instellingen → Te laat.'
+        : _printerMissing
+            ? 'De gekozen printer bestaat niet meer; kies een andere. Er '
+                'worden voorlopig geen tickets afgedrukt.'
+            : '';
     final LateArrivalPrinter? printer = _printer;
-    if (printer != null) {
+    if (selection.isNotEmpty) {
+      notes.add(_note(
+        context,
+        const ValueKey<String>('late-printer-note'),
+        selection,
+      ));
+    } else if (printer != null) {
       notes.add(
         ValueListenableBuilder<LateArrivalPrintStatus>(
           valueListenable: printer.status,
@@ -864,6 +964,114 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       const SizedBox(height: PlinkSpacing.s5),
       ...notes,
     ];
+  }
+
+  /// Which of the shared printers (#435) this desk prints on (#436).
+  ///
+  /// **Down here beside the printer note, not in the header row.** Everything
+  /// above this line is touched once per student; this is touched once per
+  /// shift and then not again. Giving it the top of the page would spend the
+  /// most valuable space on the least-used control, and would push the scan
+  /// panel — the one thing the operator looks at between two students — a line
+  /// further down for it.
+  ///
+  /// **A menu rather than a `DropdownButton`, and the reason is the focus.**
+  /// The scanner is a keyboard wedge, and this screen takes the keyboard back
+  /// the moment anything else has it ([_reclaimFocus]). A dropdown gives no
+  /// signal that it has closed, so the reclaim would either fight the open
+  /// menu for as long as it is on screen or, held off, never know when to stop
+  /// — and a scan tab that has quietly stopped reclaiming swallows the next
+  /// badge with no error and no record. [PopupMenuButton] says when it opens
+  /// *and* when it closes, picked or dismissed, so the keyboard is handed back
+  /// on exactly that edge.
+  ///
+  /// With no printers in the shared list there is nothing to choose: the
+  /// control is disabled and [_notes] points at Instellingen instead.
+  Widget _printerSelector(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final TicketPrinter? chosen = findTicketPrinter(_printers, _printerId);
+    final bool enabled = _printers.isNotEmpty;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: PlinkSpacing.s3),
+      child: Row(
+        children: <Widget>[
+          Icon(Icons.print_outlined, size: 18, color: colors.onSurfaceVariant),
+          const SizedBox(width: PlinkSpacing.s2),
+          Text(
+            'Ticketprinter',
+            style: text.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+          ),
+          const SizedBox(width: PlinkSpacing.s3),
+          PopupMenuButton<String>(
+            key: const ValueKey<String>('late-printer-select'),
+            enabled: enabled,
+            tooltip: 'Kies de printer waarop deze balie afdrukt',
+            initialValue: chosen?.id ?? '',
+            onOpened: () => _picking = true,
+            onSelected: _selectPrinter,
+            onCanceled: () {
+              _picking = false;
+              _reclaimFocus();
+            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              // First, and never absent: "this desk hands out no tickets" is a
+              // choice an operator has to be able to make at the desk — a
+              // printer that has run out of paper mid-morning should not mean
+              // a failure note on every single registration.
+              const PopupMenuItem<String>(
+                key: ValueKey<String>('late-printer-option-none'),
+                value: '',
+                child: Text('Geen printer'),
+              ),
+              // The shared list's own order, which is the order an
+              // administrator entered the desks in — never re-sorted here.
+              for (final TicketPrinter printer in _printers)
+                PopupMenuItem<String>(
+                  key: ValueKey<String>('late-printer-option-${printer.id}'),
+                  value: printer.id,
+                  child: Text(printer.displayName),
+                ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: PlinkSpacing.s3,
+                vertical: PlinkSpacing.s2,
+              ),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: colors.outlineVariant,
+                  width: PlinkBorders.width,
+                ),
+                borderRadius: const BorderRadius.all(
+                  Radius.circular(PlinkRadius.base),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    chosen?.displayName ?? 'Geen printer',
+                    key: const ValueKey<String>('late-printer-selected'),
+                    style: text.bodySmall?.copyWith(
+                      color:
+                          enabled ? colors.onSurface : colors.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: PlinkSpacing.s2),
+                  Icon(
+                    Icons.arrow_drop_down,
+                    size: 18,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _note(

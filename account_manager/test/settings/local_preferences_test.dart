@@ -190,6 +190,94 @@ void main() {
     });
   });
 
+  group('the selected ticket printer (#436)', () {
+    test('a fresh install has picked no printer', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+    });
+
+    test('survives a restart — a desk stays pointed at its printer', () async {
+      final first = LocalPreferences(FileLocalPreferenceStore(file));
+      await first.load();
+      await first.setLateArrivalPrinterId('p-onthaal');
+
+      final second = LocalPreferences(FileLocalPreferenceStore(file));
+      await second.load();
+
+      expect(second.lateArrivalPrinterId, 'p-onthaal');
+    });
+
+    test('stores the id and nothing about the address', () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalPrinterId('p-onthaal');
+
+      // The whole reason the choice is kept by id: an administrator following
+      // a printer onto a new IP must not unselect the desks that chose it.
+      final Object? written = jsonDecode(file.readAsStringSync());
+      expect(
+        (written! as Map<String, dynamic>)['lateArrivalPrinterId'],
+        'p-onthaal',
+      );
+      expect(file.readAsStringSync(), isNot(contains('host')));
+    });
+
+    test('Geen printer clears the choice rather than storing a blank',
+        () async {
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+      await prefs.setLateArrivalPrinterId('p-onthaal');
+      await prefs.setLateArrivalPrinterId(null);
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+
+      final reloaded = LocalPreferences(FileLocalPreferenceStore(file));
+      await reloaded.load();
+      expect(reloaded.lateArrivalPrinterId, isNull);
+    });
+
+    test('a blank or whitespace id reads back as no choice at all', () async {
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'lateArrivalPrinterId': '   '}),
+      );
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+    });
+
+    test('an id naming a printer that no longer exists reads back unchanged',
+        () async {
+      // Resolving it is the scan tab's job, not the bag's: the tab is what can
+      // say so to the operator, and what replaces it on the next pick.
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{'lateArrivalPrinterId': 'p-weg'}),
+      );
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, 'p-weg');
+    });
+
+    test('the address #406 kept here is not mistaken for a choice', () async {
+      // It is carried, not migrated — see "the retired printer keys (#435)"
+      // above. What matters here is that the new key reads *only* itself: an
+      // install that was configured under #406 has chosen no printer yet.
+      file.writeAsStringSync(
+        jsonEncode(<String, Object?>{
+          'lateArrivalPrinterHost': '10.1.2.3',
+          'lateArrivalTicketHeader': 'SMA',
+        }),
+      );
+      final prefs = LocalPreferences(FileLocalPreferenceStore(file));
+      await prefs.load();
+
+      expect(prefs.lateArrivalPrinterId, isNull);
+    });
+  });
+
   group('the bag is extensible (what #395 and later keys rely on)', () {
     test('a key this build does not know survives a save', () async {
       file.writeAsStringSync(

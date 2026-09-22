@@ -244,15 +244,16 @@ class LateArrivalPrinter {
           ? const LateArrivalPrintStatus(LateArrivalPrintState.idle, '')
           : const LateArrivalPrintStatus(
               LateArrivalPrintState.disabled,
-              'Er is voor deze balie geen ticketprinter ingesteld, dus er '
+              'Er is voor deze balie geen ticketprinter gekozen, dus er '
               'worden geen tickets afgedrukt. De registratie zelf gaat '
               'gewoon door.',
             ),
     );
   }
 
-  /// The printer's host name or IP, off the shared list entry this desk prints
-  /// on (#435). Empty means this desk does not print.
+  /// The printer's host name or IP, off the shared list entry this desk
+  /// selected (#435, #436). Empty means this desk does not print — nobody has
+  /// picked one, or the operator picked **Geen printer**.
   final String host;
 
   /// Always [ippPrintPort] in practice — the operator is never asked for it —
@@ -263,8 +264,8 @@ class LateArrivalPrinter {
 
   /// The few characters printed large at the top of every ticket (#429) — the
   /// school's code. Empty prints no header line. It comes off the shared
-  /// [TicketPrinter] entry this desk prints on (#435), not off the machine: the
-  /// thing that stands at one school is the printer.
+  /// [TicketPrinter] entry this desk selected (#435, #436), not off the
+  /// machine: the thing that stands at one school is the printer.
   final String header;
 
   final Duration timeout;

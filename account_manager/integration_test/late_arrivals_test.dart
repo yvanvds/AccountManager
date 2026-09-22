@@ -4,7 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory, File, Platform;
+import 'dart:io' show Directory, File, FileSystemException, Platform;
 
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -774,7 +774,16 @@ void main() {
 
       // The printer this desk prints on comes out of the *shared* settings
       // document since #435 — one list of named printers every desk reads,
-      // rather than an address in each machine's `preferences.json`.
+      // rather than an address in each machine's `preferences.json`. What the
+      // machine still keeps is *which* of them it prints on (#436), so this
+      // desk is one that was pointed at the balie printer on some earlier day.
+      final LocalPreferences preferences = LocalPreferences(
+        InMemoryLocalPreferenceStore(
+          <String, Object?>{'lateArrivalPrinterId': 'balie-printer'},
+        ),
+      );
+      await preferences.load();
+
       final harness = ReconcileHarness(
         // Seeded, not pulled: the desk answers a scan out of the snapshot the
         // launch already holds, because a student is standing at the counter.
@@ -799,6 +808,7 @@ void main() {
         desk: desk,
         refusalBeep: beep,
         ticketTransport: tickets,
+        preferences: preferences,
       ));
       await tester.pumpAndSettle();
 
@@ -922,6 +932,222 @@ void main() {
     });
 
     testWidgets(
+        'the desk picks its ticket printer off the shared list, prints on the '
+        'one it picked, and is still pointed at it after a restart (#436)',
+        (WidgetTester tester) async {
+      // Every claim of #436 needs this level, and each for its own reason.
+      //
+      // "The selection survives a restart" is a statement about a file on disk
+      // written by one widget tree and read by the next — there is no widget to
+      // pump for that. "The dropdown hands the keyboard back" is a statement
+      // about the *engine's* focus manager with a real menu route pushed above
+      // a real shell that keeps every visited destination mounted: the menu is
+      // the one thing on this page that legitimately takes the keyboard, and a
+      // scan tab that failed to take it back would swallow the next badge with
+      // no error, no ticket and no record. And "the ticket goes to the printer
+      // this desk chose, with that printer's header" is the composition of the
+      // shared document, the machine's own preferences and the print path.
+      //
+      // Nothing here reaches a printer: the transport is a recorder, per the
+      // repo's live-testing policy.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-436-');
+      addTearDown(() async {
+        // Windows refuses to delete a directory while any handle into it is
+        // still open, and the app under test is only torn down *after* this
+        // callback runs — the journal write of the last registration can still
+        // be settling. A few short retries cover that gap; a temp directory
+        // left behind is never worth failing a run over.
+        for (var i = 0; i < 20 && dir.existsSync(); i++) {
+          try {
+            dir.deleteSync(recursive: true);
+          } on FileSystemException {
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+        }
+      });
+
+      // This machine's own preference file — the real one, on the real
+      // filesystem, so "it is still there after a restart" means what it says.
+      final File preferenceFile = File(
+        '${dir.path}${Platform.pathSeparator}$localPreferencesFileName',
+      );
+
+      final _RecordingTicketTransport tickets = _RecordingTicketTransport();
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(
+          Directory('${dir.path}${Platform.pathSeparator}journaal'),
+        ),
+        credentials: InMemoryOperatorCredentialStore(),
+        deskId: 'onthaal-436',
+      );
+      addTearDown(desk.dispose);
+
+      // Two printers at two desks, with two school codes on their tickets —
+      // the shared document every desk reads (#435).
+      final LiveSettings live = LiveSettings(const AppSettings(
+        ticketPrinters: <TicketPrinter>[
+          TicketPrinter(
+            id: 'p-onthaal',
+            label: 'Onthaal',
+            host: 'bon-onthaal.invalid',
+            header: 'SMA',
+          ),
+          TicketPrinter(
+            id: 'p-toren',
+            label: 'Toren',
+            host: 'bon-toren.invalid',
+            header: 'SMT',
+          ),
+        ],
+      ));
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: live,
+      );
+
+      /// Launches (or relaunches) this machine over its own preference file —
+      /// which is the only thing a restart changes here.
+      Future<void> launch() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        final LocalPreferences preferences = LocalPreferences(
+          FileLocalPreferenceStore(preferenceFile),
+        );
+        await preferences.load();
+        await tester.pumpWidget(AccountManagerApp(
+          session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+          graph: graph,
+          reconcileBootstrap: harness.bootstrap,
+          connection: ConnectionServices(store: InMemoryConnectionStore()),
+          desk: desk,
+          ticketTransport: tickets,
+          preferences: preferences,
+        ));
+        await tester.pumpAndSettle();
+        await tester.tap(railTab('Te laat'));
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> scan(String code) async {
+        for (final String character in code.split('')) {
+          await tester.sendKeyEvent(
+            _scannerKeys[character]!,
+            character: character,
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+      }
+
+      /// Scans [code] and confirms it with the first reason — one whole
+      /// student, from badge to ticket.
+      Future<void> register(String code) async {
+        await scan(code);
+        await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+        await tester.pumpAndSettle();
+      }
+
+      Future<void> pickPrinter(String option) async {
+        final Finder select =
+            find.byKey(const ValueKey<String>('late-printer-select'));
+        await tester.ensureVisible(select);
+        await tester.pumpAndSettle();
+        await tester.tap(select);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(ValueKey<String>('late-printer-option-$option')),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      String selectedPrinter() =>
+          tester
+              .widget<Text>(
+                find.byKey(const ValueKey<String>('late-printer-selected')),
+              )
+              .data ??
+          '';
+
+      String indicatorText() =>
+          tester
+              .widget<Text>(find.descendant(
+                of: find
+                    .byKey(const ValueKey<String>('late-scanner-indicator')),
+                matching: find.byType(Text),
+              ))
+              .data ??
+          '';
+
+      // --- A desk nobody has pointed at a printer. -----------------------------
+      await launch();
+      expect(selectedPrinter(), 'Geen printer');
+
+      // --- One printer, one ticket, on that printer. ---------------------------
+      await pickPrinter('p-onthaal');
+      expect(selectedPrinter(), 'Onthaal');
+      // The keyboard came straight back: the next burst lands without a click,
+      // which is the whole focus criterion.
+      expect(indicatorText(), 'KLAAR OM TE SCANNEN');
+
+      await register('123456');
+      expect(desk.journal!.records, hasLength(1));
+      expect(tickets.hosts, <String>['bon-onthaal.invalid']);
+      expect(String.fromCharCodes(tickets.sent.single), contains('SMA'));
+      expect(
+        String.fromCharCodes(tickets.sent.single),
+        contains('Jonas Peeters'),
+      );
+
+      // --- The operator moves to the other desk. ------------------------------
+      await pickPrinter('p-toren');
+      expect(selectedPrinter(), 'Toren');
+      await register('223344');
+      expect(
+          tickets.hosts, <String>['bon-onthaal.invalid', 'bon-toren.invalid']);
+      expect(String.fromCharCodes(tickets.sent.last), contains('SMT'));
+      expect(String.fromCharCodes(tickets.sent.last), contains('Lea Janssens'));
+
+      // --- Geen printer: registered, nothing printed, no fault. ---------------
+      await pickPrinter('none');
+      expect(selectedPrinter(), 'Geen printer');
+      await register('123456');
+      expect(desk.journal!.records, hasLength(3));
+      expect(tickets.hosts, hasLength(2), reason: 'nothing was sent');
+
+      // --- The desk is set up for tomorrow, and restarted. --------------------
+      await pickPrinter('p-toren');
+      // The write is `async` and lands in a file nothing on screen reflects, so
+      // wait for the file rather than for a frame (#425).
+      await pumpUntil(
+        tester,
+        "the printer choice to reach this machine's preference file",
+        () =>
+            preferenceFile.existsSync() &&
+            preferenceFile.readAsStringSync().contains('p-toren'),
+      );
+      // By id, never by address: a DHCP move must not unselect this desk.
+      expect(
+        preferenceFile.readAsStringSync(),
+        isNot(contains('bon-toren.invalid')),
+      );
+
+      await launch();
+      expect(selectedPrinter(), 'Toren');
+      await register('123456');
+      expect(tickets.hosts.last, 'bon-toren.invalid');
+
+      // Unmount before the teardown lets go of the desk, so the scope is not
+      // listening to a disposed notifier and the journal is closed first.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'a Cosmos container that was never provisioned reads as one sentence at '
         'the desk, with the raw error behind Details (#414)',
         (WidgetTester tester) async {
@@ -1019,9 +1245,11 @@ class _CountingRefusalBeep implements RefusalBeep {
   void play() => played++;
 }
 
-/// Keeps every ticket that reached "the printer" (#406).
+/// Keeps every ticket that reached "the printer" (#406), and the address each
+/// one was sent to — which is what the desk's printer selection decides (#436).
 class _RecordingTicketTransport implements TicketTransport {
   final List<List<int>> sent = <List<int>>[];
+  final List<String> hosts = <String>[];
 
   @override
   Future<void> send({
@@ -1029,8 +1257,10 @@ class _RecordingTicketTransport implements TicketTransport {
     required int port,
     required List<int> bytes,
     required Duration timeout,
-  }) async =>
-      sent.add(List<int>.of(bytes));
+  }) async {
+    hosts.add(host);
+    sent.add(List<int>.of(bytes));
+  }
 }
 
 /// The key the scanner presses for each digit of a WISA id.
