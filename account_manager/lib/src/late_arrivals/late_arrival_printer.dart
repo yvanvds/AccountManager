@@ -244,15 +244,15 @@ class LateArrivalPrinter {
           ? const LateArrivalPrintStatus(LateArrivalPrintState.idle, '')
           : const LateArrivalPrintStatus(
               LateArrivalPrintState.disabled,
-              'Er is op deze computer geen ticketprinter ingesteld, dus er '
+              'Er is voor deze balie geen ticketprinter ingesteld, dus er '
               'worden geen tickets afgedrukt. De registratie zelf gaat '
               'gewoon door.',
             ),
     );
   }
 
-  /// The printer's host name or IP, as this machine has it configured. Empty
-  /// means this machine does not print.
+  /// The printer's host name or IP, off the shared list entry this desk prints
+  /// on (#435). Empty means this desk does not print.
   final String host;
 
   /// Always [ippPrintPort] in practice — the operator is never asked for it —
@@ -262,8 +262,9 @@ class LateArrivalPrinter {
   final TicketTransport transport;
 
   /// The few characters printed large at the top of every ticket (#429) — the
-  /// school's code as this desk has it configured. Empty prints no header
-  /// line. See `LocalPreferences.lateArrivalTicketHeader`.
+  /// school's code. Empty prints no header line. It comes off the shared
+  /// [TicketPrinter] entry this desk prints on (#435), not off the machine: the
+  /// thing that stands at one school is the printer.
   final String header;
 
   final Duration timeout;
@@ -315,9 +316,9 @@ class LateArrivalPrinter {
         header: header,
       );
     } on Object catch (e) {
-      // A header that does not fit the paper, say — one hand-edited into
-      // `preferences.json`. It is still not the student's problem: report it
-      // and let the registration stand.
+      // A header that does not fit the paper, say — one hand-edited into the
+      // shared settings document. It is still not the student's problem: report
+      // it and let the registration stand.
       _report(LateArrivalPrintStatus(
         LateArrivalPrintState.failed,
         'Het ticket kon niet worden opgemaakt. De registratie is bewaard en '

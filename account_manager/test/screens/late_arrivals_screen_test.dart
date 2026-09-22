@@ -106,21 +106,20 @@ Future<LateArrivalDesk> _openDesk(WidgetTester tester) async {
   return desk;
 }
 
-/// This machine's remembered answers, already loaded — the printer address the
-/// screen binds its printer to, and the header it prints at the top (#429).
-Future<LocalPreferences> _openPreferences(
-  String host, {
-  String header = '',
-}) async {
-  final LocalPreferences preferences = LocalPreferences(
-    InMemoryLocalPreferenceStore(<String, Object?>{
-      if (host.isNotEmpty) 'lateArrivalPrinterHost': host,
-      if (header.isNotEmpty) 'lateArrivalTicketHeader': header,
-    }),
-  );
-  await preferences.load();
-  return preferences;
-}
+/// A shared settings document holding one ticket printer (#435) — what the
+/// screen binds its printer to, address and ticket header (#429) both.
+///
+/// Shared rather than machine-local since #435: the printer a desk prints on
+/// comes out of the document every desk reads, not out of `preferences.json`.
+LiveSettings _liveWithPrinter(String host, {String header = ''}) =>
+    LiveSettings(AppSettings(ticketPrinters: <TicketPrinter>[
+      TicketPrinter(
+        id: 'balie-printer',
+        label: 'Balie',
+        host: host,
+        header: header,
+      ),
+    ]));
 
 Widget _wrap({
   required LateArrivalDesk desk,
@@ -269,9 +268,10 @@ void main() {
 
     await tester.pumpWidget(_wrap(
       desk: desk,
-      preferences: await _openPreferences('bonprinter.invalid', header: 'SMA'),
       child: LateArrivalsScreen(
-        bootstrap: _harness().bootstrap,
+        bootstrap: _harness(
+          live: _liveWithPrinter('bonprinter.invalid', header: 'SMA'),
+        ).bootstrap,
         ticketTransport: tickets,
         now: () => scannedAt,
       ),
@@ -299,8 +299,8 @@ void main() {
     // The ticket went out — and only *after* the line was on disk, which is the
     // ordering the whole journal exists to guarantee.
     expect(tickets.sent, hasLength(1));
-    // …carrying this desk's header (#429), the scan date and the scan time
-    // (#430).
+    // …carrying the chosen printer's header (#429, on the printer entry since
+    // #435), the scan date and the scan time (#430).
     expect(tickets.sent.single, containsAllInOrder(encodeCp1252('SMA')));
     expect(
       tickets.sent.single,
@@ -581,14 +581,15 @@ void main() {
     expect(find.text('1 IN WACHTRIJ'), findsOneWidget);
   });
 
-  testWidgets('a machine with no printer says so and still registers',
+  testWidgets('a desk with no printer says so and still registers',
       (WidgetTester tester) async {
+    // An empty shared list (#435) is a configuration, not a gap — no ticket
+    // comes out, and the registration is unaffected.
     _useTallWindow(tester);
     final LateArrivalDesk desk = await _openDesk(tester);
 
     await tester.pumpWidget(_wrap(
       desk: desk,
-      preferences: await _openPreferences(''),
       child: LateArrivalsScreen(
         bootstrap: _harness().bootstrap,
       ),

@@ -24,7 +24,11 @@
 /// - the **ticket** (#406) — a short school header, name, class, the *scan*
 ///   date and time, composed into an ESC/POS byte stream by a pure function so
 ///   the layout can be asserted without a printer on the network. The IPP
-///   request that carries it to the printer lives in `account_manager`.
+///   request that carries it to the printer lives in `account_manager`, and
+///   *which* printer it goes to comes out of the shared list of named printers
+///   (#435) that `AppSettings` holds — a label, an address and a ticket header
+///   per entry, so an operator who moves desks picks a printer instead of
+///   retyping an IP.
 ///
 /// One slice for what eventually makes the registration real:
 ///
@@ -127,6 +131,14 @@ export 'src/ticket/late_arrival_ticket.dart'
         ticketNameMagnification,
         ticketTimeMagnification,
         ticketWeekdayNames;
+export 'src/ticket/ticket_printer.dart'
+    show
+        TicketPrinter,
+        decodeTicketPrinters,
+        findTicketPrinter,
+        newTicketPrinterId,
+        normalizeTicketPrinters,
+        ticketPrinterIdLength;
 export 'src/ticket/ticket_metrics.dart'
     show
         ippPrintPath,

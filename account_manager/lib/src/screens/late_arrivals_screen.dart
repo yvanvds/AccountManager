@@ -61,7 +61,6 @@ import '../late_arrivals/late_arrival_printer.dart';
 import '../late_arrivals/reason_button_row.dart';
 import '../late_arrivals/refusal_beep.dart';
 import '../reconcile/reconcile_bootstrap.dart';
-import '../settings/local_preferences.dart';
 import '../shell/shell_navigation.dart';
 
 /// How long a pause between two keystrokes starts a fresh code.
@@ -185,12 +184,6 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     // and that a registration was written.
     _desk = LateArrivalDeskScope.maybeOf(context);
     _watchDrain(_desk?.drain);
-    final LocalPreferences? preferences =
-        LocalPreferencesScope.maybeOf(context);
-    _bindPrinter(
-      host: preferences?.lateArrivalPrinterHost ?? '',
-      header: preferences?.lateArrivalTicketHeader ?? '',
-    );
 
     final ShellTab? tab = ShellNavigation.maybeOf(context)?.current;
     final bool visible = tab == null || tab == ShellTab.teLaat;
@@ -241,10 +234,10 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       // a student enrolled this morning has to be scannable without a relaunch.
       services.controller.addListener(_adoptSnapshot);
       await _settingsSub?.cancel();
-      _settingsSub = services.liveSettings.changes.listen(_adoptReasons);
+      _settingsSub = services.liveSettings.changes.listen(_onSettings);
       if (!mounted) return;
       setState(() {
-        _adoptReasonList(services.liveSettings.current.lateArrivalReasons);
+        _adoptSettings(services.liveSettings.current);
         _index(services.app.smartschool.snapshot);
       });
     } on Object catch (e) {
@@ -269,9 +262,16 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
         snapshot == null ? null : ScanResolver.fromSmartschool(snapshot);
   }
 
-  void _adoptReasons(AppSettings settings) {
+  void _onSettings(AppSettings settings) {
     if (!mounted) return;
-    setState(() => _adoptReasonList(settings.lateArrivalReasons));
+    setState(() => _adoptSettings(settings));
+  }
+
+  /// Adopts everything this screen reads out of the shared document: the reason
+  /// buttons (#405) and the printer the tickets go to (#435).
+  void _adoptSettings(AppSettings settings) {
+    _adoptReasonList(settings.lateArrivalReasons);
+    _bindPrinter(settings.ticketPrinters);
   }
 
   /// Adopts the shared list, falling back to the shipped one when the document
@@ -296,11 +296,23 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     });
   }
 
-  /// Binds the printer standing at *this* desk. Machine-local (#406), so it
-  /// and the ticket header (#429) come out of `preferences.json` and not out of
-  /// the shared document, and it is rebuilt when an operator changes either in
+  /// Binds the printer this desk's tickets go to, out of the shared list
+  /// (#435), and rebinds it whenever an administrator edits that list in
   /// Instellingen.
-  void _bindPrinter({required String host, required String header}) {
+  ///
+  /// **The first entry, for now.** Which printer *this* desk prints on is a
+  /// per-machine choice the operator makes on this tab, and that selector is
+  /// #436 — the very next slice. Until it lands, a desk prints on the first
+  /// printer in the shared list, which is the right answer for the school as it
+  /// stands today (one list, entered in the order the desks were set up) and
+  /// the honest "no ticket" for an install that has entered none. An empty host
+  /// is not a fault: [LateArrivalPrinter] reports it as
+  /// [LateArrivalPrintState.disabled], exactly as an unconfigured machine did
+  /// before.
+  void _bindPrinter(List<TicketPrinter> printers) {
+    final TicketPrinter? chosen = printers.isEmpty ? null : printers.first;
+    final String host = chosen?.host ?? '';
+    final String header = chosen?.header ?? '';
     if (_printerBound && _printerHost == host && _printerHeader == header) {
       return;
     }

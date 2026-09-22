@@ -214,65 +214,16 @@ class LocalPreferences {
 
   static const String _releaseNotesSeenVersionKey = 'releaseNotesSeenVersion';
 
-  /// The host name or IP of the ticket printer standing at *this* desk (#406),
-  /// or `null` when this machine does not print.
-  ///
-  /// Machine-local rather than in the shared `AppSettings` document, and this
-  /// is the one value in the whole late-arrival slice where that is the right
-  /// answer. The reason list above it is shared precisely so every desk spells
-  /// "bus te laat" the same way — but a printer is a box on a table in one
-  /// room. Two reception desks have two printers on two addresses, and a shared
-  /// setting would send desk two's tickets to desk one, where nobody is
-  /// standing. Worse, an operator picking up a dead desk's queue from her own
-  /// laptop (#403) would inherit an address for a printer she is not sitting
-  /// at.
-  ///
-  /// `null` (or blank) is therefore a *state*, not an omission: it means "this
-  /// machine does not print", which is what an office laptop honestly is —
-  /// `LateArrivalPrinter` reports it as `LateArrivalPrintState.disabled` rather
-  /// than as a fault.
-  String? get lateArrivalPrinterHost {
-    final Object? raw = _values[_lateArrivalPrinterHostKey];
-    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
-  }
-
-  /// Records the printer address for this machine. A blank [host] clears it,
-  /// which switches printing off here rather than storing an empty address.
-  Future<void> setLateArrivalPrinterHost(String host) {
-    final String trimmed = host.trim();
-    return _set(
-      _lateArrivalPrinterHostKey,
-      trimmed.isEmpty ? null : trimmed,
-    );
-  }
-
-  static const String _lateArrivalPrinterHostKey = 'lateArrivalPrinterHost';
-
-  /// The few characters printed large at the top of every late-arrival ticket
-  /// this desk prints (#429) — the school's code, typically — or `null` for a
-  /// ticket with no header line.
-  ///
-  /// Machine-local for the same reason the printer address is: a desk prints
-  /// for one school, and the group has several. The desk at one school prints
-  /// its code, the desk at the next prints another, and neither wants the
-  /// other's. Stored trimmed; the composer refuses one longer than
-  /// `ticketHeaderMaxLength`, and the settings field cannot enter one.
-  String? get lateArrivalTicketHeader {
-    final Object? raw = _values[_lateArrivalTicketHeaderKey];
-    return raw is String && raw.trim().isNotEmpty ? raw.trim() : null;
-  }
-
-  /// Records the ticket header for this machine. A blank [header] clears it,
-  /// which prints no header line rather than an empty one.
-  Future<void> setLateArrivalTicketHeader(String header) {
-    final String trimmed = header.trim();
-    return _set(
-      _lateArrivalTicketHeaderKey,
-      trimmed.isEmpty ? null : trimmed,
-    );
-  }
-
-  static const String _lateArrivalTicketHeaderKey = 'lateArrivalTicketHeader';
+  // The ticket printer this desk prints on used to live here (#406), with the
+  // ticket header beside it (#429). Both moved into the shared settings
+  // document as a list of named printers (#435): an operator who works a
+  // different desk today, or who brings her own laptop, picks a printer rather
+  // than retyping an IP, and the header travels with the printer because the
+  // thing that stands at one school is the printer and not the machine. A
+  // `lateArrivalPrinterHost` or `lateArrivalTicketHeader` still sitting in an
+  // older `preferences.json` is simply an unread key — the bag preserves what
+  // it does not understand — and nothing migrates it: the late-arrival flow is
+  // not in production use yet.
 
   // --- the bag ---------------------------------------------------------------
 

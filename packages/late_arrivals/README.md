@@ -152,8 +152,12 @@ final bytes = composeTicketForRecord(record, header: 'SMA');
   *scan* time — taken off the record the journal already flushed, so a slow
   printer cannot move it. The date above it (`vrijdag 11/09/2026`, [#430][430])
   is what makes that evidence stand a week later.
-- **The header is a few characters the desk configures** ([#429][429]) — the
-  school's code, printed largest of all. It is a plain string rather than a
+- **The header is a few characters that belong to the *printer*** ([#429][429],
+  moved onto the printer entry by [#435][435]) — the school's code, printed
+  largest of all. It rides on the shared `TicketPrinter` rather than on the
+  machine because the thing that stands at one school is the printer, not the
+  laptop: an operator who picks a different printer prints the right code
+  without touching a second setting. It is a plain string rather than a
   bitmap: a school code needs no image file, and `ticketHeaderMaxLength` (nine
   on the 80 mm roll) is derived from the print width so the composer refuses
   what the printer would clip. Empty prints no header line.
@@ -264,3 +268,4 @@ dart test packages/late_arrivals/test
 [428]: https://github.com/yvanvds/AccountManager/issues/428
 [429]: https://github.com/yvanvds/AccountManager/issues/429
 [430]: https://github.com/yvanvds/AccountManager/issues/430
+[435]: https://github.com/yvanvds/AccountManager/issues/435

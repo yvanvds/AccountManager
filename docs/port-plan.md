@@ -313,6 +313,19 @@ holds only UI.
 | Shared, editable list of reasons | #405 | ⬜ |
 | Ticket printing over ESC/POS | #406 | ⬜ |
 | Scan tab UI | #407 | ⬜ |
+| Shared list of named ticket printers | #435 | ⬜ |
+
+The printer list is **shared, not per-machine** (#435). #406 kept one address
+in each desk's `preferences.json`, on the reasoning that a printer is a box in
+one room; what that missed is that operators are not. The school has two
+reception desks and may get more, so an administrator enters each printer once
+in `AppSettings` — label, address, and the ticket header (#429) that belongs to
+the printer because the printer is what stands at one school — and a desk picks
+one from the list (#436). Each entry carries a minted id that never changes, so
+relabelling or re-addressing a printer leaves every desk that chose it still
+pointed at the same box. Unlike the reason list there is no shipped default and
+an emptied list is honoured: "this install hands out no tickets" is a real
+configuration, and the scan flow treats it as "no ticket", never as a fault.
 
 Two facts settled by #400 that the package's code and README both restate,
 because getting either wrong marks the wrong child present: the connector's
