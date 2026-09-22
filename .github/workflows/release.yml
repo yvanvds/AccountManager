@@ -96,6 +96,40 @@ jobs:
             echo "tag=v$pubspec" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$pubspec" >> "$GITHUB_OUTPUT"
+          echo "notes=docs/release-notes/v$pubspec.md" >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # The per-release notes, checked before anything is built (#398).
+      #
+      # Here rather than beside the publish step so a bump PR that forgot the
+      # notes fails in seconds instead of after a fifteen-minute build. The
+      # file is what the **Wat is er nieuw** dialog shows operators on their
+      # first launch after the update, so an absent one is not a cosmetic
+      # omission: an empty body shows no dialog at all, and the release reaches
+      # every desk having told them nothing.
+      #
+      # Missing is a hard failure rather than a warning because there is no path
+      # to a tag that does not already go through a PR — claiming a version means
+      # editing `pubspec.yaml`, so "no time to write the notes" would have to
+      # mean "no time to bump the version". A dry run is exempt: it publishes
+      # nothing and must keep building whatever tree it was pointed at.
+      # ---------------------------------------------------------------------
+      - name: Check the release notes exist
+        if: steps.version.outputs.publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes="${{ steps.version.outputs.notes }}"
+          if [ ! -f "$notes" ]; then
+            echo "::error::No release notes at $notes. Every published release leads with its own notes — write that file on the version-bump PR (see docs/release-process.md), then re-tag."
+            exit 1
+          fi
+          if [ ! -s "$notes" ]; then
+            echo "::error::$notes is empty. An empty body shows no 'Wat is er nieuw' dialog at all, so the release would reach every operator having told them nothing."
+            exit 1
+          fi
+          echo "Release notes ($(wc -l < "$notes") lines):"
+          cat "$notes"
 
       - name: flutter build windows --release
         working-directory: account_manager
@@ -142,17 +176,30 @@ jobs:
           retention-days: 14
 
       # ---------------------------------------------------------------------
-      # Publish. The notes are written here rather than auto-generated because
-      # the SmartScreen warning is the single thing an operator most needs to
-      # read *before* they double-click: an unsigned installer with no
-      # explanation reads as a virus warning.
+      # Publish. The body is this release's own notes (#398) followed by the
+      # install boilerplate, which is not auto-generated because the SmartScreen
+      # warning is the single thing an operator most needs to read *before* they
+      # double-click: an unsigned installer with no explanation reads as a virus
+      # warning. It sits below the changes because someone reading the dialog
+      # after an automatic update has already installed.
+      #
+      # The notes file is copied in with `cat`, never interpolated into a shell
+      # string or an unquoted heredoc: it is prose written by hand and will
+      # contain backticks, `$`, `%APPDATA%` and quotes that a shell would eat.
+      # The boilerplate below stays in its quoted heredoc for the same reason.
       # ---------------------------------------------------------------------
       - name: Write release notes
         if: steps.version.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          cat > release-notes.md <<'NOTES'
+          {
+            cat "${{ steps.version.outputs.notes }}"
+            echo ""
+            echo "---"
+            echo ""
+          } > release-notes.md
+          cat >> release-notes.md <<'NOTES'
           ## Installeren
 
           Download het `.exe`-bestand onderaan deze release en voer het uit.

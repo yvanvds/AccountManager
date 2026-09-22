@@ -7,10 +7,11 @@ gets back off again when it shouldn't have. Introduced by
 ## The short version
 
 ```powershell
-# 1. Bump the version in account_manager/pubspec.yaml, commit, merge to develop.
+# 1. On one PR into develop: bump `version:` in account_manager/pubspec.yaml
+#    AND write docs/release-notes/v1.3.0.md (what changed, for the operator).
 # 2. Tag the merged commit and push the tag.
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.3.0
+git push origin v1.3.0
 # 3. Watch .github/workflows/release.yml. It publishes the installer.
 ```
 
@@ -21,6 +22,7 @@ Everything else on this page is what those three lines mean.
 | Piece | Where |
 | --- | --- |
 | Version (single source of truth) | `account_manager/pubspec.yaml` → `version:` |
+| Per-release notes | [`docs/release-notes/`](release-notes/) → `vX.Y.Z.md` |
 | Installer script | [`installer/AccountManager.iss`](../installer/AccountManager.iss) |
 | Release workflow | [`.github/workflows/release.yml`](../.github/workflows/release.yml) |
 | In-app update check | `account_manager/lib/src/update/` |
@@ -47,22 +49,26 @@ identity. Nothing compares on it.
 
 ## Tagging
 
-1. Bump `version:` in `account_manager/pubspec.yaml` on a normal PR into
-   `develop`. Semver: patch for fixes, minor for features, major for anything
-   an operator has to be told about.
+1. On a normal PR into `develop`, together in one commit:
+   - bump `version:` in `account_manager/pubspec.yaml` — semver: patch for
+     fixes, minor for features, major for anything an operator has to be told
+     about;
+   - write `docs/release-notes/v<the new version>.md` — see
+     [the release notes are read by operators](#the-release-notes-are-read-by-operators-in-the-app-395).
+     Without it the tag will refuse to build.
 2. After it merges, tag **the merge commit**:
 
    ```powershell
    git checkout develop
    git pull
-   git tag v1.1.0
-   git push origin v1.1.0
+   git tag v1.3.0
+   git push origin v1.3.0
    ```
 
 3. The `Release` workflow runs on the tag. It builds `flutter build windows
    --release`, compiles the Inno Setup script, and publishes
-   `AccountManager-Setup-v1.1.0.exe` as a GitHub Release asset with install
-   instructions in the notes.
+   `AccountManager-Setup-v1.3.0.exe` as a GitHub Release asset whose body is
+   your notes file followed by the install instructions.
 
 Tags are `vX.Y.Z`. The workflow's trigger filter (`v*.*.*`) and the app's tag
 parser both assume it.
@@ -218,21 +224,46 @@ that carried it. If a release changes a default, moves a section of Instellingen
 or reworks a screen, the release body is now the place that says so — and it is
 the *only* place, because there is no other channel to the people running this.
 
+### Write them in `docs/release-notes/vX.Y.Z.md` (#398)
+
+**Every published release leads with a file in the repository**, named for the
+version it belongs to: `docs/release-notes/v1.3.0.md`. The workflow prepends it
+to the install boilerplate, which keeps its place below the changes.
+
+Write it on the same PR as the version bump. That is not a convention, it is
+the point: the notes get reviewed with the change they describe, and the bump
+and its explanation land in one commit instead of the notes being remembered
+afterwards — which is how v1.1.0 ended up being hand-edited with
+`gh release edit` after it was already published.
+
+**A tag whose version has no notes file fails the run**, before anything is
+built, naming the path it expected. It is the same class of refusal as a tag
+disagreeing with `pubspec.yaml`, and for the same reason: there is no path to a
+tag that does not already go through a PR, so a missing file is never urgency —
+it is a bump PR that forgot. Publishing anyway is the one outcome worth
+preventing, because an empty body shows *no* dialog at all, so the release would
+reach every desk having told them nothing.
+
+A `workflow_dispatch` dry run is exempt. It publishes nothing and builds
+whatever tree it was pointed at, notes or no notes.
+
 What that means when writing one:
 
 - **Lead with what changed for the operator.** The SmartScreen paragraph and the
   install instructions matter to somebody installing by hand; they are noise to
-  the twenty operators who will be shown this after an automatic update. Put the
-  changes first.
+  the twenty operators who will be shown this after an automatic update. The
+  workflow already puts your file first — write it as if the reader has just
+  been updated, because they have.
+- **Say what they must *do*.** A release that needs an operator to configure
+  something before it works is the case this dialog exists for. Name the screen.
 - **Markdown, lightly.** The dialog renders `#`…`######` headings, `-`/`*`/`1.`
   lists, `**bold**`, `*italic*`, `` `code` ``, fenced code blocks, `---` rules,
   `[label](url)` links and bare URLs. Anything else falls through to its own
   literal text, so a table renders as pipes rather than as a table — avoid them.
 - **Not translated.** The notes are shown exactly as written, in whatever
   language they were written in. Dutch is what the operators read.
-- **An empty body shows no dialog at all.** A release published with no notes is
-  silent, which is better than an empty box — but it also means an update nobody
-  is told about.
+- **Don't repeat the boilerplate.** Installing, SmartScreen and bijwerken are
+  appended to every release already.
 
 How it decides, which is worth knowing before changing it:
 
