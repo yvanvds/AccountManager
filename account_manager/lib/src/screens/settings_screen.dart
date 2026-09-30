@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 import 'package:plink_design_system/plink_design_system.dart';
 import 'package:smartschool_api/smartschool_api.dart';
@@ -934,6 +935,29 @@ class _SettingsScreenState extends State<SettingsScreen>
       _operatorStatus = failure ??
           'Aanmelden bij Smartschool als '
               '${_operatorLoginFromFields.username} is gelukt.';
+    });
+  }
+
+  /// Puts the *stored* MFA secret on the clipboard (#441).
+  ///
+  /// Smartschool shows the secret exactly once, while the authenticator is being
+  /// set up, and every other app that signs in unattended as this operator needs
+  /// the same one. Without this the only way to get it into a second app is to
+  /// reset MFA and rescan the phone.
+  ///
+  /// It hands out nothing the Windows account could not already read — the
+  /// credential file is user-scoped DPAPI — but it is still never *rendered*:
+  /// this screen sits at the reception desk, in view of whoever is standing at
+  /// it.
+  Future<void> _copyOperatorMfa() async {
+    final String mfa = _storedOperatorLogin?.mfa.trim() ?? '';
+    if (mfa.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: mfa));
+    if (!mounted) return;
+    setState(() {
+      _operatorStatusIsError = false;
+      _operatorStatus = 'De geheime sleutel van je authenticator staat op het '
+          'klembord. Plak hem in de andere app.';
     });
   }
 
@@ -3439,6 +3463,10 @@ class _PrinterDialogState extends State<_PrinterDialog> {
 /// school's and live in Key Vault, shared. This one is a person's, so it stays on
 /// this machine, encrypted with the same user-scoped DPAPI cipher the Azure token
 /// cache uses — readable only by the Windows account that wrote it.
+///
+/// **The MFA secret can be copied back out, but still not shown** (#441).
+/// Smartschool only ever shows it while the authenticator is being set up, and
+/// other apps that sign in as the same operator need it too.
 class _SmartschoolOperatorEditor extends StatelessWidget {
   const _SmartschoolOperatorEditor({required this.state});
 
@@ -3449,6 +3477,8 @@ class _SmartschoolOperatorEditor extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
     final bool configured = state._storedOperatorLogin?.isComplete ?? false;
+    final bool hasStoredMfa =
+        state._storedOperatorLogin?.mfa.trim().isNotEmpty ?? false;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -3526,6 +3556,19 @@ class _SmartschoolOperatorEditor extends StatelessWidget {
                       icon: const Icon(Icons.login_outlined),
                       label: const Text('Aanmelding testen'),
                     ),
+                    // The stored secret, not the typed one: whoever just typed
+                    // a secret already has it. See `_copyOperatorMfa`.
+                    if (hasStoredMfa)
+                      TextButton.icon(
+                        key: const ValueKey(
+                          'settings-smartschool-operator-mfa-copy',
+                        ),
+                        onPressed: state._operatorTesting
+                            ? null
+                            : state._copyOperatorMfa,
+                        icon: const Icon(Icons.content_copy_outlined),
+                        label: const Text('Sleutel kopiëren'),
+                      ),
                     if (configured)
                       TextButton.icon(
                         key: const ValueKey(

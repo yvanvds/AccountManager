@@ -7,6 +7,7 @@ import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/screens/settings_screen.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 import 'package:smartschool_api/smartschool_api.dart';
@@ -2555,6 +2556,143 @@ void main() {
       expect(find.text('JBSWY3DPEHPK3PXP'), findsNothing);
       // A stored login can be tested without retyping anything.
       expect(tester.widget<OutlinedButton>(testButton()).onPressed, isNotNull);
+    });
+
+    group('copying the stored MFA secret (#441)', () {
+      Finder copyButton() =>
+          find.byKey(const ValueKey('settings-smartschool-operator-mfa-copy'));
+
+      /// Records every clipboard write the screen makes.
+      List<String> recordClipboard(WidgetTester tester) {
+        final List<String> copied = <String>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (MethodCall call) async {
+            if (call.method == 'Clipboard.setData') {
+              final args = call.arguments as Map<Object?, Object?>;
+              copied.add(args['text']! as String);
+            }
+            return null;
+          },
+        );
+        addTearDown(() => tester.binding.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null));
+        return copied;
+      }
+
+      testWidgets('puts the stored secret on the clipboard, never on screen',
+          (WidgetTester tester) async {
+        _useTallWindow(tester);
+        final List<String> copied = recordClipboard(tester);
+        final desk = deskWith(
+          credentials: InMemoryOperatorCredentialStore(
+            const SmartschoolOperatorLogin(
+              username: 'ann.peeters',
+              password: 'zeergeheim',
+              mfa: 'JBSWY3DPEHPK3PXP',
+            ),
+          ),
+        );
+        final harness = SettingsHarness();
+        await tester.pumpWidget(
+          wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+        );
+        await tester.pumpAndSettle();
+        await _openLateArrivalTab(tester);
+
+        await tester.ensureVisible(copyButton());
+        await tester.tap(copyButton());
+        await tester.pumpAndSettle();
+
+        expect(copied, <String>['JBSWY3DPEHPK3PXP']);
+        expect(tester.widget<Text>(status()).data, contains('klembord'));
+        // Copied, not revealed: the desk is in view of whoever stands at it.
+        expect(find.textContaining('JBSWY3DPEHPK3PXP'), findsNothing);
+        expect(
+          tester
+              .widget<TextField>(
+                find.byKey(const ValueKey('settings-smartschool-operator-mfa')),
+              )
+              .controller!
+              .text,
+          '',
+        );
+      });
+
+      testWidgets('copies what is stored, not what is being typed',
+          (WidgetTester tester) async {
+        _useTallWindow(tester);
+        final List<String> copied = recordClipboard(tester);
+        final desk = deskWith(
+          credentials: InMemoryOperatorCredentialStore(
+            const SmartschoolOperatorLogin(
+              username: 'ann.peeters',
+              password: 'zeergeheim',
+              mfa: 'JBSWY3DPEHPK3PXP',
+            ),
+          ),
+        );
+        final harness = SettingsHarness();
+        await tester.pumpWidget(
+          wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+        );
+        await tester.pumpAndSettle();
+        await _openLateArrivalTab(tester);
+
+        await tester.enterText(
+          find.byKey(const ValueKey('settings-smartschool-operator-mfa')),
+          'NIEUWESLEUTEL234',
+        );
+        await tester.pump();
+        await tester.ensureVisible(copyButton());
+        await tester.tap(copyButton());
+        await tester.pumpAndSettle();
+
+        expect(copied, <String>['JBSWY3DPEHPK3PXP']);
+      });
+
+      testWidgets('is only offered while a secret is stored',
+          (WidgetTester tester) async {
+        _useTallWindow(tester);
+        // A login without a second factor: nothing to copy.
+        final credentials = InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        );
+        final desk = deskWith(credentials: credentials);
+        final harness = SettingsHarness();
+        await tester.pumpWidget(
+          wrap(SettingsScreen(bootstrap: harness.bootstrap), desk),
+        );
+        await tester.pumpAndSettle();
+        await _openLateArrivalTab(tester);
+        expect(copyButton(), findsNothing);
+
+        // Typing a secret is not storing one.
+        await tester.enterText(
+          find.byKey(const ValueKey('settings-smartschool-operator-mfa')),
+          'JBSWY3DPEHPK3PXP',
+        );
+        await tester.pump();
+        expect(copyButton(), findsNothing);
+
+        // Saving it is.
+        await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+        await tester.tap(find.byKey(const ValueKey('settings-save')));
+        await tester.pumpAndSettle();
+        expect((await credentials.read())?.mfa, 'JBSWY3DPEHPK3PXP');
+        expect(copyButton(), findsOneWidget);
+
+        // And wissen takes it away again.
+        final Finder clear =
+            find.byKey(const ValueKey('settings-smartschool-operator-clear'));
+        await tester.ensureVisible(clear);
+        await tester.tap(clear);
+        await tester.pumpAndSettle();
+        expect(copyButton(), findsNothing);
+      });
     });
 
     testWidgets('the password and the MFA secret can be revealed while typing',
