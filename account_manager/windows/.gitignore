@@ -1,5 +1,10 @@
 flutter/ephemeral/
 
+# Rewritten by the Flutter tool on every pub get / build / run, always with LF
+# line endings — tracked, they show as modified after every Windows build.
+flutter/generated_plugin_registrant.*
+flutter/generated_plugins.cmake
+
 # Visual Studio user-specific files.
 *.suo
 *.user
