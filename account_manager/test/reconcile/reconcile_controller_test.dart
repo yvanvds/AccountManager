@@ -23,6 +23,12 @@ List<ApplyStep> recordSteps(ReconcileController controller) {
   return steps;
 }
 
+/// Every student classroom rollup [controller] holds, across the managed
+/// schools and the "Niet toegewezen" bucket — the stored view, read through the
+/// [ReconcileController.studentRollups] test seam (#448).
+Iterable<Rollup> studentClassrooms(ReconcileController controller) =>
+    controller.studentRollups.expand(controller.studentChildrenOf);
+
 /// A [SignalPublisher] whose every publish throws — to prove a broadcast
 /// failure is swallowed and never fails the pass that triggered it (#116).
 class _ThrowingPublisher implements SignalPublisher {
@@ -2296,10 +2302,7 @@ void main() {
       // The overview came from the store.
       expect(s2.controller.hasOverview, isTrue);
       expect(s2.controller.syncState.generation, 1);
-      final classroom = s2.controller.schoolRollups
-          .expand((s) => s2.controller.childrenOf(s.key))
-          .expand((g) => s2.controller.childrenOf(g.key))
-          .single;
+      final classroom = studentClassrooms(s2.controller).single;
       expect(classroom.accountCount, 1);
 
       // Still no pull.
@@ -2521,10 +2524,7 @@ void main() {
       );
       await s2.controller.loadOverview();
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3C'),
       );
 
@@ -2542,10 +2542,7 @@ void main() {
       expect(s2.controller.syncState.generation, 2);
       // 3D now exists in the refreshed rollups, and 3C is gone with it.
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         <String>['3D'],
       );
     });
@@ -2577,10 +2574,7 @@ void main() {
       );
       await s2.controller.loadOverview();
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3C'),
       );
 
@@ -2597,10 +2591,7 @@ void main() {
       await s2.controller.resyncFromStore();
       expect(s2.controller.syncState.generation, 2);
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3D'),
       );
     });
@@ -2909,10 +2900,7 @@ void main() {
       // Session 2 caught up from the signal alone — no direct onStoreChanged.
       expect(s2.controller.syncState.generation, 2);
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3D'),
       );
     });

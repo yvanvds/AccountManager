@@ -779,7 +779,7 @@ enum RollupLevel {
   /// The single top-level "Klasgroepen" node aggregating every
   /// [MaterializedGroup] (#119). It sits outside the school → grade-year →
   /// classroom tree; its [Rollup.accountCount] counts the group docs and
-  /// [Rollup.pendingCount] their applyable actions.
+  /// [Rollup.pendingCount] their pending decisions.
   groups,
   ;
 
@@ -792,7 +792,7 @@ enum RollupLevel {
 ///
 /// One per school / grade-year / classroom node, linked by [key] → [parentKey].
 /// [accountCount] is how many accounts sit under this node; [pendingCount] is
-/// how many applyable candidate actions they carry (the "N pending here" badge).
+/// how many pending decisions they carry ([pendingDecisionCount], #251).
 class Rollup {
   const Rollup({
     required this.level,
