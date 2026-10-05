@@ -55,12 +55,15 @@ bool _bulkApplyable(StudentAction a) => switch (a) {
       AzureClassGroupMembership() => false,
     };
 
-/// Legacy `Action\StaffAccount\*` granted three; `AddToStaffGroup` is not
-/// ported (the deferred `-Personeel` placement), leaving two — plus one grant
-/// made here, `ClaimStaffForAzureSchool` (#373), which has no legacy twin.
+/// Legacy `Action\StaffAccount\*` granted three, all ported — `AddToStaffGroup`
+/// since #444, as `AddStaffToAzureStaffGroup` — plus one grant made here,
+/// `ClaimStaffForAzureSchool` (#373), which has no legacy twin.
 bool _bulkApplyableStaff(StaffAction a) => switch (a) {
       AddStaffToAzure() => true,
       ModifySmartschoolStaffEmail() => true,
+      // Legacy `AddToStaffGroup(…, true, true)`: additive, mechanical, and only
+      // ever for a colleague WISA already places here (#444).
+      AddStaffToAzureStaffGroup() => true,
       // Not a legacy grant: an intake of staff adopted from sibling group
       // schools is a real cohort, the trigger is a fact WISA already states, the
       // write is additive (every other `department` entry survives), and a
@@ -81,6 +84,8 @@ bool _bulkApplyableStaff(StaffAction a) => switch (a) {
       RemoveStaffFromSmartschool() => false,
       ReleaseStaffFromAzureSchool() => false,
       RemoveStaffFromAzure() => false,
+      // Informational — cannot be applied at all (#444).
+      AzureStaffGroupNotManageable() => false,
     };
 
 /// The group family has no legacy answer to port — legacy's Klassen view had no
@@ -139,6 +144,7 @@ List<StudentAction> _studentActions() {
 List<StaffAction> _staffActions() {
   final cfg = staffConfig();
   final staff = fullySyncedStaff();
+  final staffGroup = azureStaffGroupPlacement();
   return <StaffAction>[
     AddStaffToAzure(staff, cfg),
     AddStaffToSmartschool(staff, cfg),
@@ -152,6 +158,8 @@ List<StaffAction> _staffActions() {
     ModifySmartschoolStaffEmail(staff, cfg),
     SetStaffCopyCode(staff, cfg),
     ClaimStaffForAzureSchool(staff, cfg),
+    AddStaffToAzureStaffGroup(staff, cfg, staffGroup),
+    AzureStaffGroupNotManageable(staff, cfg, staffGroup),
   ];
 }
 
@@ -208,17 +216,18 @@ void main() {
       );
     });
 
-    test('the staff family grants it to exactly three actions', () {
+    test('the staff family grants it to exactly four actions', () {
       expect(
         _granted<StaffAction>(_staffActions(), (a) => a.canApplyToAll),
         <Type>{
           AddStaffToAzure,
           ModifySmartschoolStaffEmail,
+          AddStaffToAzureStaffGroup,
           ClaimStaffForAzureSchool,
         },
         reason: 'legacy granted AddToAzure, ModifySmartschoolStaffEmail and '
-            'AddToStaffGroup; the last is not ported. ClaimStaffForAzureSchool '
-            'is a grant made in #373, not a legacy one',
+            'AddToStaffGroup (ported as AddStaffToAzureStaffGroup in #444). '
+            'ClaimStaffForAzureSchool is a grant made in #373, not a legacy one',
       );
     });
 
@@ -269,6 +278,7 @@ void main() {
       // Guard the guard: the families really do carry informational members, so
       // the loops above are not vacuous.
       expect(_studentActions().where((a) => !a.canApply), isNotEmpty);
+      expect(_staffActions().where((a) => !a.canApply), isNotEmpty);
       expect(_groupActions().where((a) => !a.canApply), isNotEmpty);
     });
 
@@ -309,7 +319,7 @@ void main() {
         _studentActions().where((a) => a.canApplyToAll),
         hasLength(11),
       );
-      expect(_staffActions().where((a) => a.canApplyToAll), hasLength(3));
+      expect(_staffActions().where((a) => a.canApplyToAll), hasLength(4));
       expect(_groupActions().where((a) => a.canApplyToAll), hasLength(4));
     });
 
@@ -318,8 +328,8 @@ void main() {
       // at compile time but cannot tell that it was also added here.
       expect(_studentActions().map((a) => a.runtimeType).toSet(), hasLength(18),
           reason: 'StudentAction has 18 members');
-      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(12),
-          reason: 'StaffAction has 12 members');
+      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(14),
+          reason: 'StaffAction has 14 members');
       expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(12),
           reason: 'GroupAction has 12 members');
     });

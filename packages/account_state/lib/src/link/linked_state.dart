@@ -7,6 +7,7 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import '../sync/application_state.dart';
 import 'azure_class_groups.dart';
+import 'azure_staff_groups.dart';
 import 'placement.dart';
 
 /// The State layer's **derived** view of one link+dispatch pass: the pure
@@ -36,6 +37,7 @@ class LinkedState {
     required this.studentActions,
     required this.staffActions,
     required this.groupActions,
+    this.missingAzureStaffGroup,
   });
 
   /// The reconciled output of `link()` over the three current snapshots.
@@ -44,16 +46,26 @@ class LinkedState {
   /// Applicable student actions, in snapshot order, with class placement wired.
   final List<actions.StudentAction> studentActions;
 
-  /// Applicable staff actions, in snapshot order, with the Smartschool group
-  /// seat a new staff account needs wired (#374). Their *Office 365* group
-  /// actions remain out of the port's scope, so unlike the student and group
-  /// families this placement is one value for the whole snapshot rather than a
-  /// per-record callback: it answers where two fixed-name groups are, nothing
-  /// about the person.
+  /// Applicable staff actions, in snapshot order, with both group seats wired:
+  /// the Smartschool one a new staff account needs (#374) — one value for the
+  /// whole snapshot, since it answers where two fixed-name groups are and
+  /// nothing about the person — and the Office 365 `<PREFIX>-Personeel`
+  /// membership (#444), a per-record callback like the student family's,
+  /// because it *is* about the person: is their account in the group?
   final List<actions.StaffAction> staffActions;
 
   /// Applicable group actions, in snapshot order, with group placement wired.
   final List<actions.GroupAction> groupActions;
+
+  /// The `<PREFIX>-Personeel` name when the school prefix names a staff group
+  /// but the Azure snapshot holds no group by that name (#444); `null` when it
+  /// resolves, or when no prefix is configured.
+  ///
+  /// Carried so the caller can say so **once** per sync. The dispatch
+  /// deliberately raises nothing in that state — a missing group is a property
+  /// of the tenant, not of each teacher, and a staff room's worth of identical
+  /// actions would bury the one fact worth reading.
+  final String? missingAzureStaffGroup;
 
   /// Recomputes the linked view from three concrete snapshots.
   ///
@@ -113,6 +125,13 @@ class LinkedState {
       studentDomain: studentConfig.studentDomain,
     );
 
+    // The Office 365 staff group (#444) is read off the raw Azure snapshot: it
+    // is not class-shaped, so the linker never makes it a linked record (#271).
+    final azureStaffGroups = AzureStaffGroupResolver(
+      azure: azure,
+      schoolPrefix: staffConfig.schoolPrefix,
+    );
+
     return LinkedState(
       snapshot: snapshot,
       studentActions: actions.studentActions(
@@ -125,12 +144,15 @@ class LinkedState {
         snapshot,
         staffConfig,
         placement: placements.staffPlacement,
+        azureGroupPlacementFor: azureStaffGroups.placementFor,
       ),
       groupActions: actions.groupActions(
         snapshot,
         placementFor: placements.groupPlacementFor,
         azurePlanFor: azureClassGroups.planFor,
       ),
+      missingAzureStaffGroup:
+          azureStaffGroups.groupMissing ? azureStaffGroups.groupName : null,
     );
   }
 

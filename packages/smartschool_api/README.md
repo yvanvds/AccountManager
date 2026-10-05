@@ -125,9 +125,9 @@ operator, not by our create.
 
 A one-off rather than a standing action, because after #374 the mis-seating
 cannot recur through the app; a standing action would need Smartschool group
-membership on `LinkedStaff` (the membership-aware follow-up `AddToStaffGroup`
-/ `AddToAzureStaffGroup` also wait on) to keep proposing a repair nothing can
-produce any more. The detection ([`misSeatedStaffAccounts`](lib/src/repair/staff_seating.dart))
+membership — the kind of membership-aware input #444 later built for the
+Office 365 staff group — to keep proposing a repair nothing can produce any
+more. The detection ([`misSeatedStaffAccounts`](lib/src/repair/staff_seating.dart))
 and the writes (`repairStaffSeating`) are library functions, unit-tested
 offline; the tool is the CLI over them. On the 2026-08-24 snapshot of this
 school's tenant (1409 accounts, 184 staff-role) it found **0** — the create

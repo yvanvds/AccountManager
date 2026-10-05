@@ -116,6 +116,28 @@ class ActionResult {
   /// drop.
   final Group? leftGroup;
 
+  /// The object ids of the **Office 365** groups an account-targeted action
+  /// added the account named by [azure] to (#444) — the staff-group seat
+  /// [AddStaffToAzure] performs after its create, and the membership write of
+  /// [AddStaffToAzureStaffGroup].
+  ///
+  /// The Azure counterpart of [joinedGroup], for the same reason [movedToClass]
+  /// exists: a membership is not a field on the account, so the user record the
+  /// write returns says nothing about it. Without these ids the State layer had
+  /// nothing to patch the groups' member lists from, and the membership action
+  /// would keep evaluating true after its own write had landed.
+  ///
+  /// Ids rather than group records, on purpose. An Azure group carries its
+  /// members on itself, so splicing a group record built from the snapshot the
+  /// action was derived from would overwrite every join a bulk pass made since
+  /// that snapshot was read. The State layer adds the one member to the group
+  /// **as it holds it now** instead.
+  ///
+  /// Only the writes that demonstrably landed are named — a dry run, a refusal,
+  /// a throw and a group Exchange Online masters all name nothing. Empty for
+  /// every other action.
+  final List<String> joinedAzureGroupIds;
+
   /// True when the record is **gone from the snapshot** for [system], so the
   /// State layer drops it rather than patching it.
   ///
@@ -182,6 +204,7 @@ class ActionResult {
     this.movedToClass,
     this.joinedGroup,
     this.leftGroup,
+    this.joinedAzureGroupIds = const <String>[],
     this.removed = false,
     this.wisaRule,
     this.generatedPassword,

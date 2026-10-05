@@ -80,6 +80,7 @@ export 'src/keyvault/key_vault_secret_provider.dart';
 export 'src/keyvault/key_vault_token_provider.dart';
 export 'src/keyvault/key_vault_transport.dart';
 export 'src/link/azure_class_groups.dart';
+export 'src/link/azure_staff_groups.dart';
 export 'src/link/linked_state.dart';
 export 'src/link/placement.dart';
 export 'src/materialize/accepted_duplicates.dart';

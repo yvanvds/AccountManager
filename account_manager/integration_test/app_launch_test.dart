@@ -9,6 +9,7 @@ import 'dart:io' show Directory, File, Platform, ZLibDecoder;
 import 'package:account_actions/account_actions.dart'
     show
         ActionOutcome,
+        AddStaffToAzureStaffGroup,
         ReleaseStaffFromAzureSchool,
         RemoveStaffFromAzure,
         RemoveStaffFromSmartschool;
@@ -9127,6 +9128,376 @@ void main() {
         harness.controller.pendingEntries.where((e) => e.family == 'staff'),
         isEmpty,
       );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'the colleagues missing from GBS-Personeel are exactly the "met acties" '
+        'list, and one school-wide apply seats them without a re-pull (#444)',
+        (WidgetTester tester) async {
+      // As reported: nothing in the app showed which teachers were missing from
+      // the Office 365 staff group — the group the tenant licenses staff
+      // through. The Entra portal was the only place the gap was visible.
+      //
+      // Only a run of the real app covers the whole path: the group has to come
+      // out of the Azure snapshot the sync produced (it is not class-shaped, so
+      // it never becomes a linked record), the membership has to reach the
+      // dispatch the Acties screen renders, the "met acties" switch has to keep
+      // exactly the right people, and the school-wide pass has to write each
+      // join and leave a snapshot in which the work is gone without a second
+      // pull.
+      useTallWindow(tester);
+      final harness = ReconcileHarness(
+        // School 1 is ours; school 7 is a sibling school of the group.
+        ourSchoolIds: const {1},
+        wisa: wisaSnap(
+          students: const [],
+          schools: [wisaSchool(1), wisaSchool(7)],
+          staff: [
+            // Two colleagues of ours outside the group…
+            wisaStaff(),
+            wisaStaff(
+                code: 'PEET',
+                wisaId: '43',
+                firstName: 'Piet',
+                lastName: 'Peeters'),
+            // …one already in it…
+            wisaStaff(
+                code: 'MAES',
+                wisaId: '44',
+                firstName: 'Lies',
+                lastName: 'Maes'),
+            // …and a teacher of the sibling school, who is not ours to seat.
+            wisaStaff(
+              code: 'VERB',
+              wisaId: '77',
+              firstName: 'Bert',
+              lastName: 'Vermeer',
+              schoolIds: const {7},
+            ),
+          ],
+        ),
+        smartschool: ssSnap(
+          groups: const [],
+          accounts: [
+            ssStaffAccount(),
+            ssStaffAccount(
+              uid: 'piet.peeters',
+              accountId: 'PEET',
+              mail: 'piet.peeters@school.example',
+              givenName: 'Piet',
+              surname: 'Peeters',
+              fax: '0043',
+            ),
+            ssStaffAccount(
+              uid: 'lies.maes',
+              accountId: 'MAES',
+              mail: 'lies.maes@school.example',
+              givenName: 'Lies',
+              surname: 'Maes',
+              fax: '0044',
+            ),
+          ],
+          memberships: const [],
+        ),
+        azure: azSnap(
+          users: [
+            azStaffUser(),
+            azStaffUser(
+              id: 'az-piet',
+              upn: 'piet.peeters@school.example',
+              employeeId: '43',
+              displayName: 'Peeters Piet',
+              givenName: 'Piet',
+              surname: 'Peeters',
+            ),
+            azStaffUser(
+              id: 'az-lies',
+              upn: 'lies.maes@school.example',
+              employeeId: '44',
+              displayName: 'Maes Lies',
+              givenName: 'Lies',
+              surname: 'Maes',
+            ),
+            azStaffUser(
+              id: 'az-vermeer',
+              upn: 'bert.vermeer@school.example',
+              employeeId: '77',
+              displayName: 'Vermeer Bert',
+              givenName: 'Bert',
+              surname: 'Vermeer',
+              department: 'SSM',
+            ),
+          ],
+          // The group as the prefix in Instellingen names it — `GBS-Personeel`
+          // for this harness's `GBS`, never a hard-coded `SSM-Personeel`.
+          groups: [
+            azStaffGroup(memberIds: const ['az-lies']),
+          ],
+        ),
+      );
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+      ));
+      await tester.pumpAndSettle();
+      await syncThenOpenActions(tester);
+      expect(harness.controller.error, isNull);
+      expect(harness.azSyncs, 1);
+      // The group resolved, so the pass says nothing about it being missing.
+      expect(
+        harness.log.entries.map((e) => e.message),
+        everyElement(isNot(contains('Geen Office 365-groep "GBS-Personeel"'))),
+      );
+
+      // Acties → Personeel, with "Toon enkel accounts met acties" on as it is by
+      // default: exactly the two colleagues whose membership is wrong.
+      await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<Switch>(
+                find.byKey(const ValueKey('actions-only-with-actions')))
+            .value,
+        isTrue,
+      );
+      expect(find.text('Anna Smit'), findsOneWidget);
+      expect(find.text('Piet Peeters'), findsOneWidget);
+      expect(find.text('Lies Maes'), findsNothing,
+          reason: 'already in the group, so nothing to do');
+      expect(find.text('Bert Vermeer'), findsNothing,
+          reason: 'a teacher of a school we do not manage');
+      expect(
+        harness.controller.pendingEntries
+            .where((e) => e.family == 'staff')
+            .map((e) => e.target),
+        unorderedEquals(<String>['Anna Smit', 'Piet Peeters']),
+      );
+      expect(
+        harness.controller.linked!.staffActions
+            .whereType<AddStaffToAzureStaffGroup>()
+            .map((a) => a.target.wisa?.code.value),
+        unorderedEquals(<String>['SMIT', 'PEET']),
+        reason: 'Bert gets nothing, not even behind the view filter',
+      );
+
+      // Anna's card names the group and whether she is in it.
+      final String anna = harness.controller.pendingEntries
+          .singleWhere((e) => e.target == 'Anna Smit')
+          .targetId;
+      await selectAccount(tester, anna);
+      expect(
+        find.text('Voeg het account toe aan de Office 365-groep GBS-Personeel'),
+        findsWidgets,
+      );
+      expect(
+        find.textContaining('lid van GBS-Personeel (Microsoft 365-groep): '
+            'nee → ja'),
+        findsWidgets,
+      );
+
+      // One press covers the school: the decision is sanctioned for a bulk pass,
+      // and the cohort it shows is the two colleagues.
+      final Finder applyAll =
+          find.byKey(ValueKey('decision-apply-all-staff-$anna-0'));
+      await tester.ensureVisible(applyAll);
+      expect(
+        find.descendant(
+            of: applyAll, matching: find.text('Toepassen op alle (2)')),
+        findsOneWidget,
+      );
+      await tester.tap(applyAll);
+      await tester.pumpAndSettle();
+      expect(
+          find.byKey(const ValueKey('actions-cohort-banner')), findsOneWidget);
+      expect(harness.graph.memberAdds, isEmpty,
+          reason: 'showing the cohort writes nothing');
+      await tester.tap(find.byKey(const ValueKey('actions-cohort-apply')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+      expect(harness.controller.error, isNull);
+
+      // One Graph join per colleague, addressed to the group and their account.
+      expect(
+        harness.graph.memberAdds,
+        unorderedEquals(<String>[
+          'az-GBS-Personeel az-staff',
+          'az-GBS-Personeel az-piet',
+        ]),
+      );
+      expect(
+        harness.controller.applyResults!.map((r) => r.outcome),
+        everyElement(ActionOutcome.applied),
+      );
+
+      // The snapshot was patched, not re-pulled: both joins are in the group —
+      // the second did not overwrite the first — and the work is gone.
+      expect(harness.azSyncs, 1);
+      expect(
+        harness.app.azure.snapshot!.groups.single.memberIds,
+        unorderedEquals(<String>['az-lies', 'az-staff', 'az-piet']),
+      );
+      expect(
+        harness.controller.pendingEntries.where((e) => e.family == 'staff'),
+        isEmpty,
+      );
+      expect(harness.controller.staffPendingCount, 0);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a new hire created in Acties → Personeel lands in GBS-Personeel '
+        'end-to-end (#444)', (WidgetTester tester) async {
+      // The other half of the report: `AddStaffToAzure` made the account and
+      // left it outside the staff group, so a new colleague started without a
+      // licence. Legacy joined the group right after the create; the port did
+      // not. The join has to target the account Graph actually minted, ride the
+      // same click as the #240 chain, and reach the local snapshot so the
+      // relinked record owes nothing.
+      useTallWindow(tester);
+      final harness = ReconcileHarness(
+        wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+        // The Smartschool seat of #374 has its groups too, so the only seat this
+        // test is about is the Office 365 one.
+        smartschool: ssSnap(
+          groups: [
+            ssGroup('Leerkrachten',
+                code: 'LK', official: false, type: GroupType.group),
+            ssGroup('Leerlingen',
+                code: 'LLN', official: false, type: GroupType.group),
+          ],
+          accounts: const [],
+          memberships: const [],
+        ),
+        azure: azSnap(users: const [], groups: [azStaffGroup()]),
+      );
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+      ));
+      await tester.pumpAndSettle();
+      await syncThenOpenActions(tester);
+      expect(harness.controller.error, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+      await tester.pumpAndSettle();
+      final String id = harness.controller.pendingEntries
+          .singleWhere((e) => e.family == 'staff')
+          .targetId;
+      await selectAccount(tester, id);
+      // The create says, before it runs, which group the new account joins.
+      expect(find.text('Maak een nieuw Office 365 account'), findsOneWidget);
+      expect(
+        find.textContaining(
+            'Office 365-groep (Microsoft 365-groep): ∅ → GBS-Personeel'),
+        findsWidgets,
+      );
+
+      await tester.ensureVisible(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.tap(find.byKey(ValueKey('entry-apply-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('actions-apply-confirm')));
+      await tester.pumpAndSettle();
+      expect(find.text('Resultaat van het toepassen'), findsOneWidget);
+
+      // The create, the join and the chained Smartschool create all landed,
+      // and nothing warned.
+      expect(
+        harness.controller.applyResults!.map((r) => r.outcome),
+        everyElement(ActionOutcome.applied),
+      );
+      expect(
+        harness.controller.applyResults!.expand((r) => r.warnings),
+        isEmpty,
+      );
+      final String created = harness.app.azure.snapshot!.users.single.id;
+      expect(harness.graph.memberAdds, <String>['az-GBS-Personeel $created'],
+          reason: 'the join addresses the account Graph just minted');
+      expect(harness.app.azure.snapshot!.groups.single.memberIds, [created]);
+
+      // Complete in all three systems and already in the group, so the relinked
+      // record owes no staff-group join.
+      final linked = harness.controller.linked!.snapshot.staff.single;
+      expect(linked.smartschool, isNotNull);
+      expect(
+        harness.controller.pendingEntries
+            .where((e) => e.family == 'staff')
+            .expand((e) => e.choices)
+            .expand((c) => c.alternatives)
+            .map((o) => o.kind),
+        isNot(contains('AddStaffToAzureStaffGroup')),
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a GBS-Personeel that Exchange Online masters is diagnosed and sent '
+        'there, never written end-to-end (#444)', (WidgetTester tester) async {
+      // A mail-enabled security group refuses every membership write from
+      // Graph (#331). The missing membership is still real — no group, no
+      // licence — so the card has to say so, name the group and where to fix it,
+      // and offer no apply that would bounce on every pass.
+      useTallWindow(tester);
+      final harness = ReconcileHarness(
+        wisa: wisaSnap(students: const [], staff: [wisaStaff()]),
+        smartschool: ssSnap(
+          groups: const [],
+          accounts: [ssStaffAccount()],
+          memberships: const [],
+        ),
+        azure: azSnap(
+          users: [azStaffUser()],
+          groups: [azStaffGroup(exchangeManaged: true)],
+        ),
+      );
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+      ));
+      await tester.pumpAndSettle();
+      await syncThenOpenActions(tester);
+      expect(harness.controller.error, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+      await tester.pumpAndSettle();
+      // A diagnosis is not work this screen can do, so — like every other
+      // informational row — it is behind the "met acties" switch.
+      expect(find.text('Anna Smit'), findsNothing);
+      final Finder toggle =
+          find.byKey(const ValueKey('actions-only-with-actions'));
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+
+      final String id = harness.controller.pendingEntries
+          .singleWhere((e) => e.family == 'staff')
+          .targetId;
+      await selectAccount(tester, id);
+      expect(
+        find.textContaining('Ontbreekt in de Office 365-groep GBS-Personeel. '
+            'Die groep is een mail-enabled beveiligingsgroep en wordt in '
+            'Exchange Online beheerd'),
+        findsWidgets,
+      );
+      // The facts it states are the group's and the membership's — stated, not
+      // diffed, because nothing here is written.
+      expect(
+        find.textContaining(
+            'lid van GBS-Personeel (mail-enabled beveiligingsgroep): nee'),
+        findsWidgets,
+      );
+      expect(
+        tester
+            .widget<FilledButton>(find.byKey(ValueKey('entry-apply-$id')))
+            .onPressed,
+        isNull,
+        reason: 'there is no write to offer',
+      );
+      expect(harness.graph.memberAdds, isEmpty);
       expect(tester.takeException(), isNull);
     });
 

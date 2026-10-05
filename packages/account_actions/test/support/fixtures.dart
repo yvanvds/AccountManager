@@ -346,6 +346,70 @@ StaffPlacement staffPlacement({
       defaultGroupName: defaultGroupName,
     );
 
+/// The Microsoft 365 group behind the staff Team, `SSM-Personeel` (#444) — a
+/// unified group, so Graph manages its membership.
+az.AzureGroup azureStaffTeamGroup({
+  String prefix = 'SSM',
+  String id = 'az-personeel-team',
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: id,
+      displayName: '$prefix-$azureStaffGroupSuffix',
+      mail: '$prefix-$azureStaffGroupSuffix@school.example',
+      mailNickname: '$prefix-$azureStaffGroupSuffix',
+      mailEnabled: true,
+      groupTypes: const ['Unified'],
+      memberIds: memberIds,
+    );
+
+/// The plain security group of the same name, `SSM-Personeel` (#444) — the
+/// other half of what legacy `AddToStaffGroup` joined. Not mail-enabled, so
+/// Graph manages its membership too.
+az.AzureGroup azureStaffSecurityGroup({
+  String prefix = 'SSM',
+  String id = 'az-personeel-sec',
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: id,
+      displayName: '$prefix-$azureStaffGroupSuffix',
+      mailNickname: '$prefix-$azureStaffGroupSuffix-sec',
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+
+/// The same security group made **mail-enabled** (#331): Exchange Online masters
+/// its membership, so Graph refuses every write on it.
+az.AzureGroup azureStaffMailEnabledSecurityGroup({
+  String prefix = 'SSM',
+  String id = 'az-personeel-mesg',
+  List<String> memberIds = const [],
+}) =>
+    az.AzureGroup(
+      id: id,
+      displayName: '$prefix-$azureStaffGroupSuffix',
+      mail: '$prefix-$azureStaffGroupSuffix-staff@school.example',
+      mailNickname: '$prefix-$azureStaffGroupSuffix-staff',
+      mailEnabled: true,
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+
+/// A staff member's `<PREFIX>-Personeel` placement (#444). Defaults to the
+/// tenant holding just the staff Team, which the account is **not** in; pass
+/// [groups] for another shape, and [memberOf] for the ids it already sits in.
+AzureStaffGroupPlacement azureStaffGroupPlacement({
+  String? groupName = 'SSM-Personeel',
+  List<az.AzureGroup>? groups,
+  Set<String> memberOf = const {},
+}) =>
+    AzureStaffGroupPlacement(
+      groupName: groupName,
+      groups: groups ?? [azureStaffTeamGroup()],
+      memberOfGroupIds: memberOf,
+    );
+
 /// A fully-synced staff member present in all three systems with matching
 /// fields — no staff action should apply to it.
 LinkedStaff fullySyncedStaff() => linkedStaff(

@@ -9,11 +9,11 @@
 /// This package ships the **student**, **staff**, and **group** families and
 /// their dispatchers, mirroring how the linker shipped student/staff/group as
 /// separate slices (#43/#44/#45). The membership/tree-dependent actions in each
-/// family (student class placement, the staff group seat, group
+/// family (student class placement, the staff group seats, group
 /// `AddToSmartschool` / `CreateInSmartschool`) take an injected placement value
-/// object — a `ClassPlacement`, `StaffPlacement` or `GroupPlacement` — so the
-/// action layer stays pure while still expressing what a `LinkedRecord` alone
-/// cannot (#55/#65/#374).
+/// object — a `ClassPlacement`, `StaffPlacement`, `AzureStaffGroupPlacement` or
+/// `GroupPlacement` — so the action layer stays pure while still expressing
+/// what a `LinkedRecord` alone cannot (#55/#65/#374/#444).
 ///
 /// Pure Dart — no Flutter, no UI coupling. Legacy reference (read-only):
 /// `legacy-wpf/AccountManager/Action/`.
@@ -24,6 +24,7 @@ export 'src/alternatives.dart';
 export 'src/apply_options.dart';
 export 'src/azure_class_group.dart';
 export 'src/azure_class_placement.dart';
+export 'src/azure_staff_group_placement.dart';
 export 'src/change_set.dart';
 export 'src/class_placement.dart';
 export 'src/connectors.dart';

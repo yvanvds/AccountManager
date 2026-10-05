@@ -195,6 +195,11 @@ class RecordingGraph implements az.GraphTransport {
   /// Deliberately not the member-ref deletes, which end in `/$ref`.
   final List<String> deletedGroups = <String>[];
 
+  /// Every single-member `POST /groups/<group>/members/$ref` this transport
+  /// accepted, as `<group id> <user id>` — the staff-group joins of #444, which
+  /// add one account at a time rather than riding a `$batch`.
+  final List<String> memberAdds = <String>[];
+
   /// When set, every `POST /groups` is refused with the
   /// `403 Authorization_RequestDenied` a tenant answers when the sign-in may
   /// not create Microsoft 365 groups — the shape #216 hit on a Graph write the
@@ -307,6 +312,17 @@ class RecordingGraph implements az.GraphTransport {
         statusCode: 200,
       );
     }
+    // A single-member join (#444): `POST /groups/<id>/members/$ref`, answered
+    // `204` like Graph does. Recorded with the directory object it added.
+    final join = _memberRefPath.firstMatch(request.url.path);
+    if (request.method == 'POST' && join != null) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      final member = '${body['@odata.id']}'.split('/').last;
+      memberAdds.add('${join.group(1)} $member');
+      return const az.GraphResponse(statusCode: 204);
+    }
     // A group delete (#271): `DELETE /groups/<id>`, as opposed to the
     // `/groups/<id>/members/<id>/$ref` a membership removal issues.
     if (request.method == 'DELETE') {
@@ -318,6 +334,10 @@ class RecordingGraph implements az.GraphTransport {
 
   /// `/v1.0/groups/<id>` — the group resource itself, not a sub-collection.
   static final RegExp _groupPath = RegExp(r'/groups/([^/]+)$');
+
+  /// `/v1.0/groups/<id>/members/$ref` — one member added to one group.
+  static final RegExp _memberRefPath =
+      RegExp(r'/groups/([^/]+)/members/\$ref$');
 
   /// `/v1.0/users/<id-or-upn>` — a read of one user, as opposed to the
   /// collection reads `/v1.0/users` and `/v1.0/users/delta`.
@@ -4148,6 +4168,50 @@ az.AzureGroup azNonClassGroup(String displayName) => az.AzureGroup(
       mail: '${displayName.replaceAll(' ', '')}@student.school.example',
       mailNickname: displayName,
     );
+
+/// Our school's Office 365 staff group, `GBS-Personeel` (#444) — the Microsoft
+/// 365 group behind the staff Team by default, whose membership Graph manages.
+///
+/// The tenant can hold two groups of this one name, as legacy's
+/// `AddToStaffGroup` assumed: pass [securityGroup] for the plain security
+/// group, or [exchangeManaged] for a **mail-enabled** security group (#331),
+/// whose membership only Exchange Online can change.
+az.AzureGroup azStaffGroup({
+  String? id,
+  List<String> memberIds = const [],
+  bool securityGroup = false,
+  bool exchangeManaged = false,
+}) {
+  if (exchangeManaged) {
+    return az.AzureGroup(
+      id: id ?? 'az-GBS-Personeel-mesg',
+      displayName: 'GBS-Personeel',
+      mail: 'personeel@school.example',
+      mailNickname: 'personeel',
+      mailEnabled: true,
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+  }
+  if (securityGroup) {
+    return az.AzureGroup(
+      id: id ?? 'az-GBS-Personeel-sec',
+      displayName: 'GBS-Personeel',
+      mailNickname: 'GBS-Personeel-sec',
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+  }
+  return az.AzureGroup(
+    id: id ?? 'az-GBS-Personeel',
+    displayName: 'GBS-Personeel',
+    mail: 'GBS-Personeel@school.example',
+    mailNickname: 'GBS-Personeel',
+    mailEnabled: true,
+    groupTypes: const ['Unified'],
+    memberIds: memberIds,
+  );
+}
 
 /// Deterministic in-memory resolver (mirrors the linker's test fixture).
 class SeqResolver implements core.PersonIdResolver {

@@ -3316,6 +3316,46 @@ void main() {
     });
   });
 
+  group('the Office 365 staff group (#444)', () {
+    /// The log lines that report the staff group missing.
+    List<LogEntry> missingGroupLines(ReconcileHarness h) => h.log.entries
+        .where(
+            (e) => e.message.contains('Geen Office 365-groep "GBS-Personeel"'))
+        .toList();
+
+    test('a tenant without <PREFIX>-Personeel is told so once, as a message',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      final lines = missingGroupLines(h);
+      expect(lines, hasLength(1),
+          reason: 'one line per pass, never one per staff member');
+      expect(lines.single.isError, isFalse,
+          reason: 'nothing failed: it is a fact about the tenant');
+      expect(lines.single.origin, core.Origin.azure);
+    });
+
+    test('an apply\'s relink does not repeat it', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntries(h.controller.pendingEntries);
+
+      expect(h.controller.applyResults, isNotEmpty);
+      expect(missingGroupLines(h), hasLength(1));
+    });
+
+    test('a tenant that has the group hears nothing about it', () async {
+      final h = ReconcileHarness(
+        azure: azSnap(users: [azUser()], groups: [azStaffGroup()]),
+      );
+      await h.controller.sync();
+
+      expect(missingGroupLines(h), isEmpty);
+    });
+  });
+
   group('a class entry that owes two writes (#272)', () {
     /// The Smartschool half: the recorded SOAP action is the fully-qualified
     /// `…V3#saveClass`.

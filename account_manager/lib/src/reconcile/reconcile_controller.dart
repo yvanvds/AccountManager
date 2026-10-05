@@ -3565,6 +3565,32 @@ class ReconcileController extends ChangeNotifier {
     _logIdCollisions(s.warnings);
     _logAzureIdentityCollisions(s.warnings);
     _logAzureClaimCollisions(s.warnings);
+    _logMissingStaffGroup(_linked!.missingAzureStaffGroup);
+  }
+
+  /// Says once per sync that Office 365 holds no `<PREFIX>-Personeel` group
+  /// (#444), when that is the case.
+  ///
+  /// The staff dispatch raises nothing in that state on purpose — a missing
+  /// group is the tenant's, not each teacher's, and a staff room's worth of
+  /// identical proposals would bury it — so this line is the only place the
+  /// operator learns why no colleague is offered the membership and why a new
+  /// hire's create warns. Logged here, in the link half, so it lands once per
+  /// pass rather than after every apply's relink.
+  ///
+  /// A message, not an error: nothing failed, and the usual causes are a prefix
+  /// that does not match the tenant's naming or a group still to be made.
+  ///
+  /// Kept to one panel row, like the other per-pass lines: the name it states
+  /// is built from the school prefix, so the prefix being wrong reads straight
+  /// off it.
+  void _logMissingStaffGroup(String? groupName) {
+    if (groupName == null) return;
+    log.addMessage(
+      core.Origin.azure,
+      'Geen Office 365-groep "$groupName": nieuw personeel komt in geen '
+      'personeelsgroep.',
+    );
   }
 
   Future<void> _relink() async {

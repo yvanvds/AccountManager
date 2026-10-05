@@ -74,6 +74,9 @@ bool _datedStaff(StaffAction a) => switch (a) {
       ModifySmartschoolStaffEmail() => false,
       SetStaffCopyCode() => false,
       ClaimStaffForAzureSchool() => false,
+      // A group membership, never a departure (#444).
+      AddStaffToAzureStaffGroup() => false,
+      AzureStaffGroupNotManageable() => false,
     };
 
 /// No group action is dated, and the switch exists so that stays a statement:
@@ -130,6 +133,7 @@ List<StudentAction> _studentActions() {
 List<StaffAction> _staffActions() {
   final cfg = staffConfig();
   final staff = fullySyncedStaff();
+  final staffGroup = azureStaffGroupPlacement();
   return <StaffAction>[
     AddStaffToAzure(staff, cfg),
     AddStaffToSmartschool(staff, cfg),
@@ -143,6 +147,8 @@ List<StaffAction> _staffActions() {
     ModifySmartschoolStaffEmail(staff, cfg),
     SetStaffCopyCode(staff, cfg),
     ClaimStaffForAzureSchool(staff, cfg),
+    AddStaffToAzureStaffGroup(staff, cfg, staffGroup),
+    AzureStaffGroupNotManageable(staff, cfg, staffGroup),
   ];
 }
 
@@ -217,8 +223,8 @@ void main() {
       // at compile time but cannot tell that it was also added here.
       expect(_studentActions().map((a) => a.runtimeType).toSet(), hasLength(18),
           reason: 'StudentAction has 18 members');
-      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(12),
-          reason: 'StaffAction has 12 members');
+      expect(_staffActions().map((a) => a.runtimeType).toSet(), hasLength(14),
+          reason: 'StaffAction has 14 members');
       expect(_groupActions().map((a) => a.runtimeType).toSet(), hasLength(12),
           reason: 'GroupAction has 12 members');
     });
