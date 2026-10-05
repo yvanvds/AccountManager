@@ -2115,8 +2115,8 @@ void main() {
     });
 
     test(
-        'a passive session projects the same tree and header count from the '
-        'stored view, and claims no tab-badge count (#446)', () async {
+        'a passive session projects the same tree and category summaries from '
+        'the stored view, and claims no tab-badge count (#446/#447)', () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
       final s1 = twoSchoolHarness();
@@ -2146,11 +2146,18 @@ void main() {
         s2.controller.studentRollups.map((r) => r.accountCount),
         active.controller.studentRollups.map((r) => r.accountCount),
       );
-      // The header count reads from RollupLevel.school rollups, which the view
-      // projection deliberately left in the store.
-      expect(
-          s2.controller.totalPendingCount, active.controller.totalPendingCount);
-      expect(s2.controller.totalPendingCount, greaterThan(0));
+      // The Synchronisatie overview's category tiles read the RollupLevel.school
+      // and "Klasgroepen" rollups, which the view projection deliberately left
+      // in the store. Both sessions read the same stored rollups, so these agree
+      // whatever the fixture: what they tally (decisions, #251) is not at issue.
+      (int, int) tile(CategorySummary s) => (s.total, s.pending);
+      expect(tile(s2.controller.studentSummary),
+          tile(active.controller.studentSummary));
+      expect(tile(s2.controller.staffSummary),
+          tile(active.controller.staffSummary));
+      expect(tile(s2.controller.groupSummary),
+          tile(active.controller.groupSummary));
+      expect(s2.controller.studentSummary.pending, greaterThan(0));
       // The tab badges do not (#446): they count accounts, which only a linked
       // view can. The two sessions used to agree here only because every
       // student in this fixture owes exactly one decision.
@@ -2240,9 +2247,9 @@ void main() {
       expect(h.controller.classesNeedingAttention, 2);
 
       // Accounts, not actions. The view holds three pending cards — Sam plus
-      // the two classes — so neither the total nor the class half is the
+      // the two classes — so neither the whole list nor the class half is the
       // number the Klasgroepen pointer wants.
-      expect(h.controller.totalPendingCount, 3);
+      expect(h.controller.pendingEntries, hasLength(3));
       expect(h.controller.accountsNeedingAttention, 1);
       expect(h.controller.groupPendingEntries, hasLength(2));
     });

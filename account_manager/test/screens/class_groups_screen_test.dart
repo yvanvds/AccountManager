@@ -1572,9 +1572,10 @@ void main() {
       find.text('1 account(s) vragen ook aandacht op Acties.'),
       findsOneWidget,
     );
-    // Accounts, not actions: the whole view holds three pending cards, two of
-    // which are the classes on this very list.
-    expect(harness.controller.totalPendingCount, 3);
+    // Accounts, not cards: the other two pending cards are the classes on this
+    // very list, which its own header already counts.
+    expect(find.textContaining('2 klas(sen), waarvan 2 aandacht vragen'),
+        findsOneWidget);
   });
 
   testWidgets('…and says nothing at all when no account needs anything (#301)',

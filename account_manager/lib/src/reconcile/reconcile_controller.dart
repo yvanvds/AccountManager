@@ -1423,20 +1423,6 @@ class ReconcileController extends ChangeNotifier {
   List<SituationCohort> get groupPendingSituations =>
       situationCohorts(groupPendingEntries);
 
-  /// The count shown in the Actions header (#154): the live entry count in an
-  /// active session, or the summed top-level rollup pending counts in a passive
-  /// session that only read the materialized view (no live entries to build).
-  int get totalPendingCount {
-    if (_linked != null) return pendingEntries.length;
-    var total = 0;
-    for (final r in _rollups) {
-      if (r.level == RollupLevel.school || r.level == RollupLevel.groups) {
-        total += r.pendingCount;
-      }
-    }
-    return total;
-  }
-
   /// The count on the Personeel tab's badge (#179): how many staff members the
   /// list under "Toon enkel accounts met acties" shows.
   ///
@@ -2091,9 +2077,9 @@ class ReconcileController extends ChangeNotifier {
 
   /// The school-level rollups, alphabetical — the stored per-school aggregates.
   /// They no longer render as nodes in the student drill-down (#210 flattened
-  /// that to grade-years), but they are what the per-category summaries and the
-  /// passive header count are summed from, so they stay materialized. Not the
-  /// passive tab badges: those count accounts, which a rollup does not (#446).
+  /// that to grade-years), but they are what the per-category summaries are
+  /// summed from, so they stay materialized. Not the passive tab badges: those
+  /// count accounts, which a rollup does not (#446).
   List<Rollup> get schoolRollups {
     final schools = [
       for (final r in _rollups)
@@ -2123,10 +2109,9 @@ class ReconcileController extends ChangeNotifier {
   /// projection: the stored rollups keep their school → grade-year → classroom
   /// shape, which matters twice over. `school` is the Cosmos partition key of the
   /// per-account documents, so a classroom node keeps its real school and one
-  /// partition can still be read on its own; and [totalPendingCount],
-  /// [schoolRollups] and the per-category summaries all aggregate over
-  /// [RollupLevel.school], so a passive session's counts keep reading from data
-  /// that is still there.
+  /// partition can still be read on its own; and [schoolRollups] and the
+  /// per-category summaries both read [RollupLevel.school], so a passive
+  /// session's counts keep reading from data that is still there.
   ///
   /// Since #295 Acties no longer *browses* these: the flat account list renders
   /// straight off the linked view. They stay as the counts every passive surface
@@ -2325,9 +2310,10 @@ class ReconcileController extends ChangeNotifier {
   /// mirror of [classesNeedingAttention], for the line Klasgroepen carries.
   ///
   /// Accounts rather than actions, so the two pointers are one sentence in two
-  /// nouns, and [totalPendingCount] is the wrong number for it twice over: it
-  /// counts cards of every family, class groups included, and an account with
-  /// three decisions on it is still one row of the list.
+  /// nouns. Neither ready-made total fits: [pendingEntries] holds cards of
+  /// every family, class groups included, and a rollup's pending count tallies
+  /// decisions, while an account with three decisions on it is still one row of
+  /// the list.
   ///
   /// Applyable rather than merely pending, which is the same predicate the flat
   /// list filters on and the same one its indicators colour by (#245/#255/#298):

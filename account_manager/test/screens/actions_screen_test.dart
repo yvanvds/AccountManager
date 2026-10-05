@@ -1440,7 +1440,7 @@ void main() {
 
     // The counts are partitioned by family, and together they sum the accounts
     // the rail's Acties chip counts — nothing dropped or double-counted. Not
-    // [totalPendingCount]: that also counts the class groups, which are
+    // every pending entry: those include the class groups, which are
     // Klasgroepen's, and the entries with nothing applyable on them (#445).
     expect(harness.controller.staffPendingCount, greaterThan(0));
     expect(harness.controller.studentPendingCount, greaterThan(0));

@@ -372,12 +372,12 @@ class _AppShellState extends State<AppShell> {
   /// cross-tab pointer lines quote ([OtherTabAttentionLine]) — so the chip, the
   /// pointer and the header of the page it leads to cannot drift apart.
   ///
-  /// Accounts rather than the pending-card total for Acties, deliberately.
-  /// `totalPendingCount` counts every family, class groups included, so a rail
-  /// showing it beside the Klasgroepen chip would count the same class work
-  /// twice; and in a passive session it sums stored rollups while the Acties
-  /// list renders no rows at all, which is precisely a chip disagreeing with
-  /// the page under it.
+  /// Accounts rather than a pending-card total for Acties, deliberately. The
+  /// cards span every family, class groups included, so a rail counting them
+  /// beside the Klasgroepen chip would count the same class work twice; and a
+  /// passive session could only sum stored rollups while the Acties list
+  /// renders no rows at all, which is precisely a chip disagreeing with the
+  /// page under it.
   int? _pendingOn(ShellTab tab) {
     final ReconcileController? c = _counts;
     if (c == null) return null;
