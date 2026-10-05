@@ -2,10 +2,10 @@ import 'package:flutter/widgets.dart';
 
 /// The shell's destinations, by name (#301).
 ///
-/// A screen that points at another tab — "12 klas(sen) vragen ook aandacht" on
-/// Acties, its mirror on Klasgroepen — names the destination rather than the
-/// index the navigation rail happens to give it, so reordering the rail cannot
-/// silently re-aim a link.
+/// A screen that points at another tab — "12 account(s) vragen ook aandacht op
+/// Acties" on Klasgroepen — names the destination rather than the index the
+/// navigation rail happens to give it, so reordering the rail cannot silently
+/// re-aim a link.
 enum ShellTab {
   synchronisatie,
   klasgroepen,

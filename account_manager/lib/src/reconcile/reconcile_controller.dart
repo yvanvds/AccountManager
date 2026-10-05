@@ -34,31 +34,6 @@ enum ReconcilePhase {
   ready,
 }
 
-/// One pending action, shaped for display: which family it belongs to, the
-/// record it targets, and its pure change description.
-class PendingActionView {
-  const PendingActionView({
-    required this.family,
-    required this.target,
-    required this.changes,
-    this.canApply = true,
-  });
-
-  /// `student`, `staff`, or `group` — the dispatcher family.
-  final String family;
-
-  /// Human label of the record the action targets.
-  final String target;
-
-  /// The action's pure diff ([actions.StudentAction.describeChanges] et al.).
-  final actions.ChangeSet changes;
-
-  /// False for the informational group actions (e.g. an orphan Smartschool
-  /// class): they tell the operator something but have no automated write, so
-  /// the dry-run/apply passes skip them.
-  final bool canApply;
-}
-
 /// The outcome of one action in a dry-run or apply pass, for the results list.
 class ActionOutcomeEntry {
   const ActionOutcomeEntry({
@@ -1139,35 +1114,6 @@ class ReconcileController extends ChangeNotifier {
     return [...l.studentActions, ...l.staffActions, ...l.groupActions];
   }
 
-  /// The pending actions as flat display rows, in [pendingActions] order. No
-  /// screen reads these any more — the Acties list renders [linkedAccounts]
-  /// joined to [pendingEntries] (#295) — only tests do.
-  List<PendingActionView> get pendingViews {
-    final l = _linked;
-    if (l == null) return const [];
-    return [
-      for (final a in l.studentActions)
-        PendingActionView(
-          family: 'student',
-          target: _accountLabel(a.target),
-          changes: a.describeChanges(),
-        ),
-      for (final a in l.staffActions)
-        PendingActionView(
-          family: 'staff',
-          target: _staffLabel(a.target),
-          changes: a.describeChanges(),
-        ),
-      for (final a in l.groupActions)
-        PendingActionView(
-          family: 'group',
-          target: _groupLabel(a.target),
-          changes: a.describeChanges(),
-          canApply: a.canApply,
-        ),
-    ];
-  }
-
   /// The pending actions grouped **one entry per target** (#110): each linked
   /// account/staff/group becomes a single [PendingAccountEntry], and its
   /// mutually-exclusive actions (unregister *vs* delete) collapse into one
@@ -1261,13 +1207,6 @@ class ReconcileController extends ChangeNotifier {
     return entries;
   }
 
-  /// The pending entries grouped into "same situation" cohorts (#110/#292), in
-  /// first-seen order. Each cohort is **one** decision and every account that
-  /// raises it, so it can be bulk-applied ("unregister every departed student")
-  /// while each account keeps its own chosen alternative.
-  List<SituationCohort> get pendingSituations =>
-      situationCohorts(pendingEntries);
-
   /// The whole school's cohort for one decision, narrowed to the members a
   /// **school-wide** apply may write (#296) — or `null` when this decision gets
   /// no apply-all at all.
@@ -1324,8 +1263,10 @@ class ReconcileController extends ChangeNotifier {
     return SituationCohort(key: all.key, decisions: members);
   }
 
-  /// [pendingSituations] as a lookup by [SituationCohort.key], memoized on the
-  /// entry list it was grouped from.
+  /// Every [pendingEntries] decision grouped into its school-wide cohort
+  /// ([situationCohorts], #110/#292) and looked up by [SituationCohort.key] —
+  /// what [applyToAllCohortFor] narrows. Memoized on the entry list it was
+  /// grouped from.
   Map<String, SituationCohort> get _cohortIndex {
     final entries = pendingEntries;
     final cached = _cohortIndexCache;
@@ -2961,10 +2902,10 @@ class ReconcileController extends ChangeNotifier {
 
   // There is deliberately no `applyAll` / `dryRun` over the whole linked view
   // (#294). Every pass starts from a list the operator is looking at: one card
-  // ([applyEntry]), one decision across its cohort ([applyDecisions]), or a
-  // scoped selection ([applyEntries]). A method that took "everything pending"
-  // existed only to serve a header button that wrote every account in the
-  // school on the strength of a dialog nobody could verify.
+  // ([applyEntry]) or one decision across its cohort ([applyDecisions]). A
+  // method that took "everything pending" existed only to serve a header
+  // button that wrote every account in the school on the strength of a dialog
+  // nobody could verify.
   //
   // #296's school-wide apply-all is not a return of it: it is
   // [applyDecisions] over an [applyToAllCohort], which is one action the
@@ -2986,8 +2927,16 @@ class ReconcileController extends ChangeNotifier {
       );
 
   /// Applies **every** chosen resolution on each of [entries] (#110) — the
-  /// whole-card pass. Each entry keeps its own chosen alternative, so one
-  /// departed student can be unregistered while another is deleted.
+  /// whole-card pass behind [applyEntry], public only as a test seam (#451).
+  ///
+  /// The app hands it one card: the per-card **Toepassen** goes through
+  /// [applyEntry]. The callers that passed several went with the classroom
+  /// bulk header (replaced by [applyDecisions] in #292) and the global apply
+  /// (#294). Tests still pass several, to drive one multi-card pass — each card
+  /// keeping its own chosen alternative, a refused write among landed ones, the
+  /// derived lists pinned across it — without a screen that offers one. A
+  /// screen that wants to write several accounts at once has [applyDecisions]
+  /// over a cohort, not this.
   ///
   /// The per-decision counterpart is [applyDecisions] (#292); this is the "do
   /// everything on this account" reading, which stays because it is not blind —
@@ -3000,20 +2949,23 @@ class ReconcileController extends ChangeNotifier {
   /// group-wide that happened to share the situation, none of which the
   /// operator had seen. Passing the very list the button counted makes that
   /// mismatch structurally impossible: label, confirmation scope ([applyScope])
-  /// and write are one list. In the app that list is one card today — the
-  /// per-card apply goes through [applyEntry].
+  /// and write are one list.
   ///
   /// [deletionDate] is the uitschrijvingsdatum the operator answered with
   /// (#394), carried straight into `ApplyOptions` for the whole pass. `null`
   /// means nothing asked — the pass then behaves exactly as it did before, with
   /// each dated write falling back to its own default.
+  @visibleForTesting
   Future<void> applyEntries(
     Iterable<PendingAccountEntry> entries, {
     DateTime? deletionDate,
   }) =>
       _run(decisionsOf(entries), dry: false, deletionDate: deletionDate);
 
-  /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes.
+  /// Dry-runs [entries]' chosen resolutions — [applyEntries] with no writes,
+  /// and a test seam for the same reason (#451): the app's preview is
+  /// [dryRunEntry], one card at a time.
+  @visibleForTesting
   Future<void> dryRunEntries(Iterable<PendingAccountEntry> entries) =>
       _run(decisionsOf(entries), dry: true);
 

@@ -20,8 +20,11 @@ void main() {
   const String moveKey = 'student|MoveToSmartschoolClassGroup';
   const String renameKey = 'student|ModifyAzureName';
 
+  /// The whole school's cohort for [key], non-applyable and unsanctioned
+  /// members included — the grouping `applyToAllCohortFor` narrows.
   SituationCohort cohort(ReconcileHarness h, String key) =>
-      h.controller.pendingSituations.firstWhere((c) => c.key == key);
+      ReconcileController.situationCohorts(h.controller.pendingEntries)
+          .firstWhere((c) => c.key == key);
 
   PendingAccountEntry studentNamed(ReconcileHarness h, String name) =>
       h.controller.pendingEntries.firstWhere((e) => e.target == name);

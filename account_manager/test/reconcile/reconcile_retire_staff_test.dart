@@ -1,5 +1,6 @@
 import 'package:account_actions/account_actions.dart' as actions;
 import 'package:account_core/account_core.dart' as core;
+import 'package:account_manager/src/reconcile/reconcile_controller.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wisa_api/wisa_api.dart' as wapi;
@@ -65,8 +66,11 @@ void main() {
       expect(kinds, isNot(contains('RetireStaffMember')));
       expect(h.controller.staffPendingCount, 0);
       expect(h.controller.applyableCount, 0);
+      // The school-wide cohorts a "Toepassen op alle" is resolved from
+      // (`applyToAllCohortFor`) are grouped from exactly this list.
       expect(
-        h.controller.pendingSituations.where((s) => s.key.startsWith('staff|')),
+        ReconcileController.situationCohorts(h.controller.pendingEntries)
+            .where((s) => s.key.startsWith('staff|')),
         isEmpty,
       );
     });

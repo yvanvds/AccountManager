@@ -7,7 +7,8 @@
 /// pulling or re-linking**. `materialize()` turns a `LinkedState` into a
 /// [MaterializedView]; the `LinkedStore` persists it as one document per
 /// [MaterializedAccount] (partitioned by school) plus the [Rollup] aggregates
-/// that drive the drill-down.
+/// that summarize them — what the Synchronisatie overview tiles are summed
+/// from.
 ///
 /// Everything here is pure JSON-round-tripping data — no I/O, no Flutter — so
 /// the model is unit-testable and reused unchanged by the in-memory fake and
@@ -63,7 +64,7 @@ class CandidateAction {
   /// `alternativeGroup`; `null` when the action stands on its own.
   ///
   /// Persisted since #251, because a passive session has nothing else to tell an
-  /// either/or from two independent to-dos: without it the rollup badges counted
+  /// either/or from two independent to-dos: without it the rollup counts tallied
   /// both halves of one choice, and the read-only tiles listed both as separate
   /// bullets. Absent in documents written before #251, which read back as `null`
   /// — the pre-#110 shape, and correct for every candidate that has no
@@ -331,10 +332,11 @@ class OtherEnrolment {
 /// One linked account (or staff member) as a stored document.
 ///
 /// The atomic write/notify unit of the materialized view: partitioned by
-/// [school], it records where the person sits (school / grade-year / classroom
-/// for the drill-down), the per-system presence and [confidence] the linker
-/// derived, any account-scoped [warnings], the computed [candidates], and the
-/// still-applicable [decisions] re-attached by the last sync.
+/// [school], it records where the person sits (school / grade-year / classroom,
+/// the path its [Rollup]s are tallied along), the per-system presence and
+/// [confidence] the linker derived, any account-scoped [warnings], the computed
+/// [candidates], and the still-applicable [decisions] re-attached by the last
+/// sync.
 class MaterializedAccount {
   const MaterializedAccount({
     required this.id,
@@ -368,10 +370,13 @@ class MaterializedAccount {
   /// Human label for [school] (from the WISA schools list when known).
   final String schoolLabel;
 
-  /// Grade-year bucket (e.g. `3`) for the drill-down, or a synthetic bucket.
+  /// Grade-year bucket (e.g. `3`) — the grade-year [Rollup] this account is
+  /// tallied under — or a synthetic bucket.
   final String gradeYear;
 
-  /// Classroom bucket (e.g. `3C`) for the drill-down, or a synthetic bucket.
+  /// Classroom bucket (e.g. `3C`), or a synthetic bucket: the classroom
+  /// [Rollup] this account is tallied under, the class an account row shows
+  /// and sorts by, and the `ShardRef.classroom` a change that narrow names.
   final String classroom;
 
   final core.PersonRole role;
@@ -488,10 +493,10 @@ class MaterializedAccount {
   /// Still-applicable operator decisions re-attached by the last sync.
   final List<AccountDecision> decisions;
 
-  /// Whether an apply pass would write anything here (drives the "pending"
-  /// badge counts): at least one decision whose selected resolution is
-  /// applyable — [pendingDecisionCount] read as a flag, so the work-list filter
-  /// keeps exactly the accounts the badges count (#251).
+  /// Whether an apply pass would write anything here: at least one decision
+  /// whose selected resolution is applyable — [pendingDecisionCount] read as a
+  /// flag (#251), so it is true exactly when this account adds to its rollups'
+  /// [Rollup.pendingCount].
   bool get hasPending => pendingDecisionCount(candidates) > 0;
 
   MaterializedAccount withDecisions(List<AccountDecision> decisions) =>
@@ -616,16 +621,17 @@ const String staffPartition = 'staff';
 
 /// The synthetic partition (and rollup school) every account with no class *of
 /// ours* lands in — a student who left, or one who only exists in a school we do
-/// not manage but still owns one of our accounts (#178). Exposed so the Actions
-/// drill-down can tell this bucket apart from a real school when it flattens the
-/// student tree to grade-years (#210): "Niet toegewezen" stays a top-level node
-/// of its own instead of merging into a year.
+/// not manage but still owns one of our accounts (#178). Exposed so a projection
+/// of the stored student rollups onto grade-years (#210) can tell this bucket
+/// apart from a real school: "Niet toegewezen" stays a node of its own instead
+/// of merging into a year. Today that projection is the app's `studentRollups`
+/// test seam (#448).
 const String unassignedPartition = 'unassigned';
 
 /// One linked **class group** as a stored document (#119).
 ///
 /// The group-family counterpart of [MaterializedAccount]: where a per-account
-/// doc drills down through school / grade-year / classroom, a group record is a
+/// doc is filed under school / grade-year / classroom, a group record is a
 /// `LinkedGroup` (a WISA class, an orphan Smartschool class, an Azure group left
 /// behind by a class that is gone), which does not fit that per-account shape.
 /// So the materializer emits these as their own documents in the
@@ -770,7 +776,8 @@ class MaterializedGroup {
       );
 }
 
-/// Which level of the drill-down a [Rollup] aggregates.
+/// Which level of the stored school → grade-year → classroom tree a [Rollup]
+/// aggregates.
 enum RollupLevel {
   school,
   gradeYear,
@@ -787,12 +794,17 @@ enum RollupLevel {
   static RollupLevel fromJson(String s) => values.byName(s);
 }
 
-/// A small aggregate document that drives the drill-down without loading the
-/// per-account docs beneath it.
+/// A small aggregate document that summarizes the per-account docs beneath it
+/// without loading them.
 ///
 /// One per school / grade-year / classroom node, linked by [key] → [parentKey].
 /// [accountCount] is how many accounts sit under this node; [pendingCount] is
 /// how many pending decisions they carry ([pendingDecisionCount], #251).
+///
+/// The Synchronisatie overview tiles are summed from the school nodes and the
+/// [RollupLevel.groups] node, so they read in a session that never linked. The
+/// grade-year and classroom nodes are kept current beside them, but no screen
+/// reads them today.
 class Rollup {
   const Rollup({
     required this.level,
