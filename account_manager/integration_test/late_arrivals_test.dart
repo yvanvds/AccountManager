@@ -94,6 +94,26 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Deletes the temp directory [dir], retrying while Windows still holds a
+  /// handle into it.
+  ///
+  /// Windows refuses to delete a directory while any handle into it is open,
+  /// and the app under test is only torn down *after* a test's own tear-downs
+  /// run — so the journal write of the last registration can still be
+  /// settling, and in a test that failed mid-write it is still open for
+  /// certain (#453). A few short retries cover that gap. A temp directory left
+  /// behind is never worth failing a run over, and a second error in the
+  /// teardown would only bury the first.
+  Future<void> deleteTempDir(Directory dir) async {
+    for (var i = 0; i < 20 && dir.existsSync(); i++) {
+      try {
+        dir.deleteSync(recursive: true);
+      } on FileSystemException {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
+  }
+
   group('Te laat', () {
     testWidgets(
         'the late-arrival settings have a tab of their own, between Azure and '
@@ -758,9 +778,7 @@ void main() {
       useTallWindow(tester);
 
       final Directory dir = Directory.systemTemp.createTempSync('am-te-laat-');
-      addTearDown(() {
-        if (dir.existsSync()) dir.deleteSync(recursive: true);
-      });
+      addTearDown(() => deleteTempDir(dir));
 
       final _CountingRefusalBeep beep = _CountingRefusalBeep();
       final _RecordingTicketTransport tickets = _RecordingTicketTransport();
@@ -879,6 +897,22 @@ void main() {
       // --- A reason registers, prints and frees the input. ---------------------
       await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
       await tester.pumpAndSettle();
+      // **Never `pumpAndSettle` alone** (#425, #453). `_confirm` awaits the
+      // journal's flushed append — real file I/O — and only then holds the
+      // record in memory, prints and frees the screen. The integration
+      // binding's `pumpAndSettle` gives that one 100 ms pump of wall time and
+      // returns, which a slow CI disk does not always fit in. Wait on what
+      // actually happened instead.
+      await pumpUntil(
+        tester,
+        'the registration to be flushed to the journal',
+        () => desk.journal!.records.isNotEmpty,
+      );
+      await pumpUntil(
+        tester,
+        'the ticket to reach its printer',
+        () => tickets.sent.isNotEmpty,
+      );
 
       expect(desk.journal!.records, hasLength(1));
       final LateArrivalRecord written = desk.journal!.records.single;
@@ -954,20 +988,7 @@ void main() {
 
       final Directory dir =
           Directory.systemTemp.createTempSync('am-te-laat-436-');
-      addTearDown(() async {
-        // Windows refuses to delete a directory while any handle into it is
-        // still open, and the app under test is only torn down *after* this
-        // callback runs — the journal write of the last registration can still
-        // be settling. A few short retries cover that gap; a temp directory
-        // left behind is never worth failing a run over.
-        for (var i = 0; i < 20 && dir.existsSync(); i++) {
-          try {
-            dir.deleteSync(recursive: true);
-          } on FileSystemException {
-            await Future<void>.delayed(const Duration(milliseconds: 50));
-          }
-        }
-      });
+      addTearDown(() => deleteTempDir(dir));
 
       // This machine's own preference file — the real one, on the real
       // filesystem, so "it is still there after a restart" means what it says.

@@ -102,7 +102,14 @@ void main() {
             .whereType<actions.MoveToSmartschoolClassGroup>(),
         hasLength(1),
       );
-      expect(h.controller.pendingViews, isNotEmpty);
+      // …and it reaches the pending list the Acties rows are joined to.
+      expect(
+        h.controller.pendingEntries
+            .where((e) => e.family == 'student')
+            .expand((e) => e.choices)
+            .map((c) => c.selected.kind),
+        contains('MoveToSmartschoolClassGroup'),
+      );
       expect(h.log.entries.where((e) => e.isError), isEmpty);
     });
   });
@@ -430,14 +437,14 @@ void main() {
     });
 
     test(
-        'a failing writeMaterialized still drops the drill-down caches, so the '
-        'open class cannot pair the previous generation with the fresh view '
+        'a failing writeMaterialized still drops the cached class inventory, so '
+        'Klasgroepen cannot pair the previous generation with the fresh view '
         '(#289)', () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
 
       // Session 1 materializes generation 1, so there are stored documents for
-      // the next session to drill into.
+      // the next session to read.
       final s1 = ReconcileHarness(store: snapshots, linkedStore: linkedStore);
       await s1.controller.sync();
 
@@ -1141,8 +1148,9 @@ void main() {
           reason: 'a real write re-links from the patched snapshot');
     });
 
-    /// Every node of the overview tree keyed by its rollup key, with the count
-    /// the badge renders — the whole projection #236 is about, in one map.
+    /// Every stored student rollup node and the Klasgroepen node, keyed by
+    /// rollup key, with its `Rollup.pendingCount` — the whole projection #236 is
+    /// about, in one map.
     Map<String, int> pendingByNode(ReconcileController c) => <String, int>{
           for (final root in c.studentRollups) ...<String, int>{
             root.key: root.pendingCount,
@@ -1152,8 +1160,8 @@ void main() {
           if (c.groupRollup case final groups?) groups.key: groups.pendingCount,
         };
 
-    /// The classroom node whose badge the fixture's one student action sits
-    /// under: Sam's class, 3C of school 1.
+    /// The classroom rollup the fixture's one student action is counted in:
+    /// Sam's class, 3C of school 1.
     Rollup klas3C(ReconcileController c) => c
         .studentChildrenOf(
             c.studentRollups.singleWhere((r) => r.gradeYear == '3'))
@@ -1165,9 +1173,9 @@ void main() {
 
     test('re-derives the counts the pass just changed, and only those (#236)',
         () async {
-      // The badges read `Rollup.pendingCount` off `_rollups`, which only
-      // [_persist] assigned — and that runs from `_relink()` alone. So an apply
-      // left the drilled-in list (live, derived from `_linked`) and the overview
+      // `Rollup.pendingCount` is read off `_rollups`, which only [_persist]
+      // assigned — and that runs from `_relink()` alone. So an apply left the
+      // live pending list (derived from `_linked`) and the stored counts
       // disagreeing until the next Synchroniseer.
       final h = appliedClassWorkHarness();
       await h.controller.sync();
@@ -1178,7 +1186,8 @@ void main() {
 
       expect(h.controller.error, isNull);
       expect(klas3C(h.controller).pendingCount, 0,
-          reason: 'the badge used to keep its pre-apply count until a re-sync');
+          reason:
+              'the rollup used to keep its pre-apply count until a re-sync');
       expect(
         h.controller.studentRollups
             .singleWhere((r) => r.gradeYear == '3')
@@ -1193,7 +1202,7 @@ void main() {
     test('a dry-run leaves every count exactly as it found it (#236)',
         () async {
       // The correction is gated on a *real* write: a projection changes nothing,
-      // so it must not move a single badge.
+      // so it must not move a single count.
       final h = appliedClassWorkHarness();
       await h.controller.sync();
       final before = pendingByNode(h.controller);
@@ -1210,8 +1219,8 @@ void main() {
         'a pass with a refused write clears only what really went through '
         '(#236)', () async {
       // The counts must follow the writes, not the pass: the first action is
-      // refused, the rest land. Sam's class keeps its badge while the class
-      // groups lose theirs.
+      // refused, the rest land. Sam's class keeps its pending count while the
+      // class groups lose theirs.
       var calls = 0;
       final h = appliedClassWorkHarness(applyGate: () async {
         if (++calls == 1) throw StateError('Office 365 weigerde dit');
@@ -1275,8 +1284,9 @@ void main() {
 
     test('the stored account document drops the applied candidate (#254)',
         () async {
-      // The badge is a sum over documents, so the document has to move with it —
-      // a passive session reads the per-account docs, not just the rollups.
+      // A rollup's pendingCount is a sum over documents, so the document has to
+      // move with it — the stored per-account doc is shared state too, not just
+      // the rollups above it.
       final h = appliedClassWorkHarness();
       await h.controller.sync();
       final entry = samEntry(h.controller);
@@ -1444,8 +1454,16 @@ void main() {
       );
       await h.controller.sync();
 
-      final informational = h.controller.pendingViews.where((v) => !v.canApply);
-      expect(informational, isNotEmpty);
+      // Listed where the Klasgroepen tab reads its work: a decision on 9Z's
+      // entry whose selected resolution writes nothing.
+      final informational = ReconcileController.decisionsOf(
+        h.controller.groupPendingEntries,
+      ).where((d) => !d.canApply);
+      expect(informational.map((d) => d.entry.targetId), contains('9Z'));
+      expect(
+        informational.map((d) => d.choice.selected.kind),
+        contains('DoNotImportFromSmartschool'),
+      );
       expect(h.controller.applyableCount,
           lessThan(h.controller.pendingActions.length));
 
@@ -1782,8 +1800,8 @@ void main() {
       expect(school.label, 'Instituut Sancta Maria-A (ISMAA)');
       expect(school.label, isNot('School 25'));
 
-      // The same label is baked into the per-account documents the drill-down
-      // reads back, so a passive session sees it too.
+      // The same label is baked into the stored per-account documents, so a
+      // session reading the shared view back sees it too.
       final accounts = await h.linkedStore.readClassroom(
         school: school.school,
         classroom: '3C',
@@ -1989,8 +2007,9 @@ void main() {
       final h = ReconcileHarness();
       await h.controller.sync();
 
-      // One fixture student (School 1); the rollup pendingCount sums her
-      // applyable candidate actions (as the Actions drill-down badges do).
+      // One fixture student (School 1); the rollup pendingCount counts her
+      // pending decisions (two), which the Synchronisatie Leerlingen tile
+      // quotes as "openstaande acties" — decisions, not students with work.
       expectSummary(h.controller.studentSummary, total: 1, pending: 2);
       // No staff in the fixture ⇒ the staff bucket is absent.
       expectSummary(h.controller.staffSummary, total: 0, pending: 0);
@@ -2012,7 +2031,8 @@ void main() {
 
       expectSummary(h.controller.studentSummary, total: 3, pending: 3);
       expect(h.controller.applyableCount, 3,
-          reason: 'the badge and the live list agree on what is pending');
+          reason: 'the stored summary and the live list agree on what is '
+              'pending');
       expectSummary(h.controller.staffSummary, total: 0, pending: 0);
     });
 
@@ -2036,7 +2056,7 @@ void main() {
     });
   });
 
-  group('school-less student drill-down (#210)', () {
+  group('school-less student rollups (#210)', () {
     test(
         'the top level is the grade-years merged across every managed school, '
         'with combined counts and no school node', () async {
@@ -2063,8 +2083,8 @@ void main() {
       expect(h.controller.studentRollups.map((r) => r.label),
           isNot(contains('School 1')));
 
-      // …but the stored rollups keep it, so the aggregates that count by
-      // RollupLevel.school (the badges, the category summaries) still have data.
+      // …but the stored rollups keep it, so the category summaries behind the
+      // Synchronisatie tiles, which sum RollupLevel.school, still have data.
       expect(h.controller.schoolRollups.map((r) => r.label),
           containsAll(<String>['School 1', 'School 2']));
       expect(h.controller.studentSummary.total, 4);
@@ -2277,7 +2297,7 @@ void main() {
 
   group('passive session reads the store (#115)', () {
     test(
-        'a resumed session renders the overview and drills into a classroom '
+        'a resumed session renders the overview and reads a classroom rollup '
         'without any pull or link()', () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
@@ -3132,7 +3152,8 @@ void main() {
       expect(w.mail, 'shared@school.example');
       expect(w.accepted, isFalse);
       expect(w.accounts.map((a) => a.uid).toSet(), {'admin', 'user'});
-      // The colliding accounts carry their display detail for the drill-down.
+      // The colliding accounts carry their display detail for the expandable
+      // warning tile that lists them.
       expect(w.accounts.every((a) => a.name.isNotEmpty), isTrue);
       expect(w.accounts.every((a) => a.accountType == 'student'), isTrue);
     });

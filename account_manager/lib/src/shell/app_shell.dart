@@ -369,8 +369,9 @@ class _AppShellState extends State<AppShell> {
   /// chip carrying a stale or invented number is worse than none.
   ///
   /// Both numbers are the controller's own derivations, the same pair the
-  /// cross-tab pointer lines quote ([OtherTabAttentionLine]) — so the chip, the
-  /// pointer and the header of the page it leads to cannot drift apart.
+  /// Klasgroepen page quotes — its header the class count, its pointer line at
+  /// Acties ([OtherTabAttentionLine]) the account count — so the chip, the
+  /// pointer and the page it leads to cannot drift apart.
   ///
   /// Accounts rather than a pending-card total for Acties, deliberately. The
   /// cards span every family, class groups included, so a rail counting them

@@ -11,8 +11,8 @@
 /// and the confirm/progress machinery every write goes through — live here,
 /// public, instead of being duplicated or reached for across a private boundary.
 ///
-/// The screens keep what is theirs: the drill-down tree and account cards stay
-/// in Acties, the inventory rows in Klasgroepen.
+/// The screens keep what is theirs: the flat account list and its details pane
+/// stay in Acties, the inventory rows in Klasgroepen.
 library;
 
 import 'dart:async';
@@ -78,8 +78,8 @@ int? _leadingYear(String name) {
 // The `PendingRow` / `pendingRows` flattening that interleaved a classroom's
 // bulk headers with its entry tiles is gone with the drill-down it served
 // (#295). Klasgroepen collects its [SituationHeader]s above the inventory
-// directly, and the flat Acties list has no cohort headers at all until #296
-// gives school-wide bulk apply its own cohort-first affordance.
+// directly, and the flat Acties list has no cohort headers at all: #296 gave
+// school-wide bulk apply its own cohort-first affordance instead.
 
 // ---------------------------------------------------------------------------
 // Wording.
@@ -836,7 +836,7 @@ class SharedStateNotice extends StatelessWidget {
   }
 }
 
-/// The pointer one action screen carries at the other (#301).
+/// The pointer Klasgroepen carries at Acties (#301).
 ///
 /// Acties covers people and Klasgroepen covers classes, and since #227 the split
 /// is right — but it means "is everything as expected?" is only answerable by
@@ -846,31 +846,25 @@ class SharedStateNotice extends StatelessWidget {
 /// roster write is one `SyncAzureClassGroupMembers` per class in Klasgroepen. An
 /// operator can work Acties to a clean list and leave 150 stale rosters behind.
 ///
-/// So each header states what the other screen is holding, and following the
-/// line lands there.
+/// So the Klasgroepen header states what Acties is holding, and following the
+/// line lands there. #301 gave Acties the mirror line, pointing back at
+/// Klasgroepen; #309 took it off with the rest of that header, so this is the
+/// one pointer left.
 ///
 /// Three things it is careful about:
 ///
-/// - **One derivation per count.** Both numbers come from the controller
-///   ([ReconcileController.classesNeedingAttention] /
-///   [ReconcileController.accountsNeedingAttention]) rather than from the screen
-///   that renders the line, so the pointer and the header it points at cannot
-///   drift apart. A pointer quoting a number the destination then contradicts
-///   is worse than no pointer at all.
-/// - **Silence when there is nothing.** A line reading "0 klas(sen)" is noise in
-///   the one case where the operator is actually done, so a zero count renders
-///   nothing whatsoever.
+/// - **One derivation for the count.** The number comes from the controller
+///   ([ReconcileController.accountsNeedingAttention]) rather than from the
+///   screen that renders the line, so the pointer and the list it points at
+///   cannot drift apart. A pointer quoting a number the destination then
+///   contradicts is worse than no pointer at all.
+/// - **Silence when there is nothing.** A line reading "0 account(s)" is noise
+///   in the one case where the operator is actually done, so a zero count
+///   renders nothing whatsoever.
 /// - **It still reads outside the shell.** [ShellNavigation] is absent in a
 ///   widget test and in any embedding that is not the rail, and the sentence is
 ///   true either way — so it degrades to plain prose rather than vanishing.
 class OtherTabAttentionLine extends StatelessWidget {
-  /// The line **Acties** carries: how many classes Klasgroepen is holding.
-  const OtherTabAttentionLine.classes({required this.count})
-      : _noun = 'klas(sen)',
-        _screen = 'Klasgroepen',
-        _tab = ShellTab.klasgroepen,
-        super(key: const ValueKey('actions-class-attention'));
-
   /// The line **Klasgroepen** carries: how many accounts Acties is holding.
   const OtherTabAttentionLine.accounts({required this.count})
       : _noun = 'account(s)',
@@ -878,7 +872,8 @@ class OtherTabAttentionLine extends StatelessWidget {
         _tab = ShellTab.acties,
         super(key: const ValueKey('class-groups-account-attention'));
 
-  /// How many rows the *other* screen has that ask something of the operator.
+  /// How many rows the screen it points at has that ask something of the
+  /// operator.
   final int count;
 
   final String _noun;

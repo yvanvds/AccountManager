@@ -67,7 +67,8 @@ void main() {
       final h = departedHarness();
       await h.controller.sync();
 
-      final studentCohorts = h.controller.pendingSituations
+      final studentCohorts = ReconcileController.situationCohorts(
+              h.controller.pendingEntries)
           .where((c) => c.decisions.every((d) => d.entry.family == 'student'))
           .toList();
       expect(studentCohorts, hasLength(1),
@@ -241,8 +242,9 @@ void main() {
         }
       }
 
-      final cohort = h.controller.pendingSituations
-          .firstWhere((c) => c.key == 'student|ModifyAzureName');
+      final cohort =
+          ReconcileController.situationCohorts(h.controller.pendingEntries)
+              .firstWhere((c) => c.key == 'student|ModifyAzureName');
       expect(cohort.decisions, hasLength(3),
           reason: 'three students share the rename');
 
@@ -264,7 +266,7 @@ void main() {
       // …and the second of each really is the settled view: the pass released
       // the pinned lists before it announced it was over.
       expect(
-        h.controller.pendingSituations
+        ReconcileController.situationCohorts(h.controller.pendingEntries)
             .where((c) => c.key == 'student|ModifyAzureName'),
         isEmpty,
         reason: 'the three renames were written, so nothing raises them again',
@@ -672,8 +674,9 @@ void main() {
       final entries = staffEntries(h);
       expect(entries, hasLength(2));
 
-      final cohort = h.controller.pendingSituations.firstWhere(
-          (c) => c.key == 'staff|${actions.staffImportAlternative}');
+      // Resolved exactly as the Acties "Toepassen op alle" resolves it (#296).
+      final cohort = h.controller
+          .applyToAllCohortFor('staff|${actions.staffImportAlternative}')!;
       expect(
         cohort.decisions.map((d) => d.entry.targetId),
         entries.map((e) => e.targetId),

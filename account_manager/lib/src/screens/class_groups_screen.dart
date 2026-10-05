@@ -23,7 +23,8 @@ export 'action_tiles.dart' show compareClassNames;
 /// Every class the last sync linked is a row here — not only the ones that
 /// raised something — with a column per system (WISA · Smartschool · Office
 /// 365) and the rows that need work highlighted. That inversion is the whole
-/// point. The Acties drill-down listed changes, so a *wrong* proposal looked
+/// point. Before it the classes were a node of the Acties drill-down (itself
+/// gone since #295), which listed only changes, so a *wrong* proposal looked
 /// exactly like every right one: `2G` was offered for creation although
 /// Smartschool already had it (#225), and nothing on screen could have shown
 /// otherwise. Three green ticks on a row means the class is correct everywhere,
@@ -74,9 +75,8 @@ export 'action_tiles.dart' show compareClassNames;
 /// A class that needs work is inspected — and, where it is applyable, dry-run
 /// and applied — right here, through the same tiles Acties uses
 /// (`action_tiles.dart`), so the operator never has to hop to a second list of
-/// the same classes. That is also why the Klasgroepen node left the Acties
-/// drill-down: this tab is its superset, and the same list must not be
-/// maintained in two places.
+/// the same classes. That is also why Acties lists no classes: this tab is
+/// their superset, and the same list must not be maintained in two places.
 ///
 /// Shares the one memoized [ReconcileServices] (and so the one
 /// [ReconcileController]) with Reconcile, Acties and Wachtwoorden, so a sync run
@@ -318,9 +318,9 @@ class _ClassGroupsBodyState extends State<_ClassGroupsBody> {
     final bool active = controller.linked != null;
     final rows = _rows();
     // The same predicate the rows below key their highlight on, but derived on
-    // the controller since #301 — Acties quotes this number too, and a pointer
-    // that counted differently from the list it points at would be worse than
-    // none.
+    // the controller since #301 — the rail's Klasgroepen chip quotes this
+    // number too (#367), and a chip that counted differently from the list it
+    // leads to would be worse than none.
     final int attention = controller.classesNeedingAttention;
     // The two filters compose rather than replace one another (#262): the
     // search narrows the inventory to the classes the operator is looking for,
@@ -540,8 +540,8 @@ class _ClassGroupsHeader extends StatelessWidget {
   final int total;
   final int attention;
 
-  /// How many accounts are waiting on the Acties tab (#301) — the mirror of the
-  /// line Acties carries about this one.
+  /// How many accounts are waiting on the Acties tab (#301) — what the pointer
+  /// line under the count quotes.
   final int accountsNeedingAttention;
 
   @override
@@ -567,9 +567,9 @@ class _ClassGroupsHeader extends StatelessWidget {
           },
           style: text.bodyMedium,
         ),
-        // The other half of "is everything as expected?" (#301) — the mirror of
-        // the pointer Acties carries at this tab, in the same place under the
-        // count line, and silent when Acties is holding nothing.
+        // The other half of "is everything as expected?" (#301): what Acties is
+        // holding, under the count line, and silent when it holds nothing.
+        // Acties carried the mirror line pointing here until #309.
         if (accountsNeedingAttention > 0) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s1),
           OtherTabAttentionLine.accounts(count: accountsNeedingAttention),
