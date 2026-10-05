@@ -1851,6 +1851,63 @@ void main() {
       expect(classroom.single.decisions, hasLength(1),
           reason: 'the surviving decision is re-attached to the account doc');
     });
+
+    test(
+        'a family tab counts the accounts with an applyable decision, never '
+        'one whose only item is informational and never a class (#445)',
+        () async {
+      final h = informationalOnlyHarness();
+      await h.controller.sync();
+      expect(h.controller.error, isNull);
+
+      // The fixture really holds the diagnoses, as pending entries the
+      // badges could have counted.
+      String nameOf(PendingAccountEntry e) => e.target;
+      final entries = h.controller.pendingEntries;
+      expect(
+        entries.where((e) => e.family == 'staff' && !e.canApply).map(nameOf),
+        <String>['Anna Smit'],
+      );
+      expect(
+        entries.where((e) => e.family == 'student' && !e.canApply).map(nameOf),
+        unorderedEquals(<String>['Joe Janssens', 'Jim Jacobs']),
+      );
+      expect(entries.where((e) => e.family == 'group'), isNotEmpty);
+
+      // Piet and Jane, whose rows are the only ones under "met acties".
+      expect(h.controller.staffPendingCount, 1);
+      expect(h.controller.studentPendingCount, 1);
+      // Two tabs, one rail chip: the badges partition what the chip counts.
+      expect(h.controller.accountsNeedingAttention, 2);
+    });
+
+    test(
+        'a passive session counts the same badges over an informational-only '
+        'account (#445)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final active = informationalOnlyHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await active.controller.sync();
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+      expect(s2.controller.linked, isNull, reason: 'passive: never linked');
+
+      // The stored rollups count applyable decisions only, and the Klasgroepen
+      // rollup is not a student's.
+      expect(
+          s2.controller.staffPendingCount, active.controller.staffPendingCount);
+      expect(s2.controller.studentPendingCount,
+          active.controller.studentPendingCount);
+      expect(s2.controller.staffPendingCount, 1);
+      expect(s2.controller.studentPendingCount, 1);
+    });
   });
 
   group('category overview summaries (#163)', () {

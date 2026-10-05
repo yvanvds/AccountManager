@@ -1437,29 +1437,56 @@ class ReconcileController extends ChangeNotifier {
     return total;
   }
 
-  /// The pending-action count shown on the Personeel tab's badge (#179): the
-  /// live staff-family entry count in an active session, else the staff school
-  /// rollup's stored pending count in a passive session.
+  /// The count on the Personeel tab's badge (#179): how many staff members the
+  /// list under "Toon enkel accounts met acties" shows.
+  ///
+  /// In an active session that is the staff entries with at least one applyable
+  /// decision ([PendingAccountEntry.canApply]) — the predicate the row's
+  /// `hasWork`, the "met acties" switch and [accountsNeedingAttention] all use
+  /// (#445). An entry whose only item is an informational diagnosis, such as
+  /// the Exchange-mastered `<PREFIX>-Personeel` notice of #444, is not work this
+  /// tab can do, so it adds nothing: the badge used to count it while the row
+  /// read 0 and the filtered list left it out.
+  ///
+  /// In a passive session it is the staff school rollup's stored pending count,
+  /// which counts applyable decisions ([pendingDecisionCount]) and so leaves
+  /// the same diagnosis out. It counts decisions rather than accounts, so it
+  /// matches the active figure only while nobody carries two. The tab bar is
+  /// not shown without a linked view, so no badge reads it today.
   int get staffPendingCount {
     if (_linked != null) {
-      return pendingEntries.where((e) => e.family == 'staff').length;
+      return pendingEntries
+          .where((e) => e.family == 'staff' && e.canApply)
+          .length;
     }
     return staffSchoolRollup?.pendingCount ?? 0;
   }
 
-  /// The pending-action count shown on the Leerlingen tab's badge (#179): the
-  /// live student- and group-family entry count in an active session, else the
-  /// summed student-school and "Klasgroepen" rollup pending counts in a passive
-  /// session. Together with [staffPendingCount] this partitions
-  /// [totalPendingCount] with no overlap or double-counting.
+  /// The count on the Leerlingen tab's badge (#179): how many students the list
+  /// under "Toon enkel accounts met acties" shows.
+  ///
+  /// In an active session that is the student entries with at least one
+  /// applyable decision, by the same predicate as [staffPendingCount] (#445): a
+  /// student whose only item is the `AzureClassGroupMembership` diagnosis of
+  /// #245 is not counted. Class groups are not counted either. They have their
+  /// own tab, where [classesNeedingAttention] counts them on the rail, and the
+  /// Leerlingen list has not shown them since #295.
+  ///
+  /// In a passive session it is the summed student school rollups' stored
+  /// pending counts, without the "Klasgroepen" rollup for the same reason, and
+  /// with the same decisions-for-accounts caveat as [staffPendingCount].
+  ///
+  /// In an active session, together with [staffPendingCount] this partitions
+  /// [accountsNeedingAttention], the count on the rail's Acties chip.
   int get studentPendingCount {
     if (_linked != null) {
-      return pendingEntries.where((e) => e.family != 'staff').length;
+      return pendingEntries
+          .where((e) => e.family == 'student' && e.canApply)
+          .length;
     }
     var total = 0;
     for (final r in _rollups) {
-      if (r.level == RollupLevel.groups ||
-          (r.level == RollupLevel.school && r.school != staffPartition)) {
+      if (r.level == RollupLevel.school && r.school != staffPartition) {
         total += r.pendingCount;
       }
     }

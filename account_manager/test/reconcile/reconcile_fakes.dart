@@ -2958,6 +2958,139 @@ ReconcileHarness azureClassGroupHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the Acties tab badges (#445). In each family it has one
+/// account with applyable work, and beside it accounts whose **only** pending
+/// item is an informational diagnosis. A badge that counts the diagnoses reads
+/// too high.
+///
+/// Students: our school 1, shaped like [azureClassGroupHarness]. Joe and Jim sit
+/// in the sub-grouped class `2F`, whose Office 365 group `GBS-2F` holds neither
+/// of them, so each carries only the `AzureClassGroupMembership` diagnosis of
+/// #245. The class itself carries the roster write, which is class work on
+/// Klasgroepen. Jane, in `1A`, has a blank Office 365 display name, so
+/// `ModifyAzureName` gives her applyable work.
+///
+/// Staff: Anna is in step in all three systems but missing from
+/// `GBS-Personeel`, which Exchange Online masters, so she carries only the
+/// `AzureStaffGroupNotManageable` diagnosis of #444. Piet is a new hire who is
+/// in WISA alone, so his import decision is applyable work.
+///
+/// [store] / [linkedStore] are forwarded so a passive session can be resumed
+/// over the view this one materializes.
+ReconcileHarness informationalOnlyHarness({
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      store: store,
+      linkedStore: linkedStore,
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '2F',
+            classSubGroup: 'ECO',
+            firstName: 'Joe',
+            name: 'Janssens',
+          ),
+          wisaStudent(
+            wisaId: '3',
+            classGroup: '2F',
+            classSubGroup: 'MAW',
+            firstName: 'Jim',
+            name: 'Jacobs',
+          ),
+        ],
+        staff: [
+          wisaStaff(),
+          wisaStaff(
+              code: 'PEET',
+              wisaId: '43',
+              firstName: 'Piet',
+              lastName: 'Peeters'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('1A', description: 'Eerste jaar A'),
+          wisaClassGroup('2F',
+              groupName: 'ECO', adminCode: 'a', description: 'Tweede jaar F'),
+          wisaClassGroup('2F',
+              groupName: 'MAW', adminCode: 'b', description: 'Tweede jaar F'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('2F ECO',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F ECO'),
+          ssGroup('2F MAW',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F MAW'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+          ssAccount(
+            uid: 'joe',
+            accountId: '2',
+            mail: 'a2@student.school.example',
+            givenName: 'Joe',
+            surname: 'Janssens',
+          ),
+          ssAccount(
+            uid: 'jim',
+            accountId: '3',
+            mail: 'a3@student.school.example',
+            givenName: 'Jim',
+            surname: 'Jacobs',
+          ),
+          ssStaffAccount(),
+        ],
+        memberships: [
+          member('jane', '1A'),
+          member('joe', '2F ECO'),
+          member('jim', '2F MAW'),
+        ],
+      ),
+      azure: azSnap(
+        users: [
+          // Jane's display name is left blank, which is her applyable work.
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              department: '1A'),
+          azUser(
+              id: 'az2',
+              upn: 'a2@student.school.example',
+              employeeId: '2',
+              displayName: 'Joe Janssens',
+              department: '2F'),
+          azUser(
+              id: 'az3',
+              upn: 'a3@student.school.example',
+              employeeId: '3',
+              displayName: 'Jim Jacobs',
+              department: '2F'),
+          azStaffUser(),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          // Joe and Jim are missing from it.
+          azClassGroup('2F'),
+          azStaffGroup(exchangeManaged: true),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the class group Graph will not manage the membership of
 /// (#331) — the reported bug, in the smallest shape that reproduces it.
 ///

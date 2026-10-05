@@ -6573,6 +6573,97 @@ void main() {
     });
 
     testWidgets(
+        'each family tab counts the accounts "met acties" lists, never one '
+        'whose only item is informational and never a class (#445)',
+        (WidgetTester tester) async {
+      // As reported: Acties → Personeel read 1 over a colleague whose only item
+      // was the Exchange-mastered GBS-Personeel diagnosis of #444, while her row
+      // read 0 and "Toon enkel accounts met acties" left her out. Leerlingen had
+      // the same fault with the AzureClassGroupMembership diagnosis of #245, and
+      // also counted the class groups, which it does not list.
+      //
+      // Only a full run puts the badge, the filtered list under it and the rail
+      // chip of the shell side by side on one screen, which is where the
+      // disagreement showed. One account with work in each family, beside the
+      // diagnoses: Jane and Piet.
+      useTallWindow(tester);
+      final harness = informationalOnlyHarness();
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+      ));
+      await tester.pumpAndSettle();
+      await syncThenOpenActions(tester);
+      expect(harness.controller.error, isNull);
+
+      /// The number on a family tab, or `null` when it carries none.
+      String? tabBadge(String tab) {
+        final Finder badge = find.descendant(
+          of: find.byKey(ValueKey('actions-tab-$tab')),
+          matching: find.byType(PlinkBadge),
+        );
+        return badge.evaluate().isEmpty
+            ? null
+            : tester.widget<PlinkBadge>(badge).text;
+      }
+
+      /// The number on a rail destination's chip, or `null` when it has none.
+      int? chipCount(String tab) {
+        final Finder chip = find.byKey(ValueKey<String>('rail-count-$tab'));
+        return chip.evaluate().isEmpty
+            ? null
+            : tester.widget<PendingBadge>(chip).count;
+      }
+
+      Finder row(String label) =>
+          find.byKey(ValueKey('account-row-${accountId(harness, label)}'));
+
+      // Leerlingen, with "met acties" on as it is by default: Jane alone, and a
+      // badge of 1. Joe and Jim's diagnoses are not work this tab can do, and
+      // the 2F roster write is a class's, on Klasgroepen.
+      expect(
+        tester
+            .widget<Switch>(
+                find.byKey(const ValueKey('actions-only-with-actions')))
+            .value,
+        isTrue,
+      );
+      expect(row('Jane Doe'), findsOneWidget);
+      expect(row('Joe Janssens'), findsNothing);
+      expect(row('Jim Jacobs'), findsNothing);
+      expect(tabBadge('leerlingen'), '1');
+
+      // Personeel: Piet alone, and a badge of 1. Before the fix it read 2.
+      await tester.tap(find.byKey(const ValueKey('actions-tab-personeel')));
+      await tester.pumpAndSettle();
+      expect(row('Piet Peeters'), findsOneWidget);
+      expect(row('Anna Smit'), findsNothing);
+      expect(tabBadge('personeel'), '1');
+
+      // The two badges add up to the rail's Acties chip. The class work is
+      // counted once, on the Klasgroepen chip.
+      expect(chipCount('acties'), 2);
+      expect(chipCount('klasgroepen'), 1);
+
+      // With the switch off the diagnosed accounts are rows again. They are
+      // pending, but the badges do not move: they count work, not rows.
+      final Finder toggle =
+          find.byKey(const ValueKey('actions-only-with-actions'));
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(row('Anna Smit'), findsOneWidget);
+      expect(tabBadge('personeel'), '1');
+      await tester.tap(find.byKey(const ValueKey('actions-tab-leerlingen')));
+      await tester.pumpAndSettle();
+      expect(row('Joe Janssens'), findsOneWidget);
+      expect(row('Jim Jacobs'), findsOneWidget);
+      expect(tabBadge('leerlingen'), '1');
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'the flat Acties list virtualizes in the real app: only a bounded number '
         'of rows build, and scrolling loads more (#111/#295)',
         (WidgetTester tester) async {
