@@ -1448,18 +1448,21 @@ class ReconcileController extends ChangeNotifier {
   /// tab can do, so it adds nothing: the badge used to count it while the row
   /// read 0 and the filtered list left it out.
   ///
-  /// In a passive session it is the staff school rollup's stored pending count,
-  /// which counts applyable decisions ([pendingDecisionCount]) and so leaves
-  /// the same diagnosis out. It counts decisions rather than accounts, so it
-  /// matches the active figure only while nobody carries two. The tab bar is
-  /// not shown without a linked view, so no badge reads it today.
+  /// Zero without a linked view, as [accountsNeedingAttention] is: that is a
+  /// count this session cannot make, not a claim that nobody has work (#446).
+  /// The view stores no accounts-with-work figure. The staff school rollup's
+  /// `pendingCount` counts applyable *decisions* ([pendingDecisionCount]), so a
+  /// teacher owed both the `<PREFIX>-Personeel` join of #444 and a copy-code
+  /// repair adds two to it and one row to the list. Quoting it would bring
+  /// back, for a passive session, the disagreement #445 removed from an active
+  /// one. Nothing reads it there today: the tab bar is only built over a linked
+  /// view, and the shell tells "unknown" from zero by `linked` itself, not by
+  /// the number.
   int get staffPendingCount {
-    if (_linked != null) {
-      return pendingEntries
-          .where((e) => e.family == 'staff' && e.canApply)
-          .length;
-    }
-    return staffSchoolRollup?.pendingCount ?? 0;
+    if (_linked == null) return 0;
+    return pendingEntries
+        .where((e) => e.family == 'staff' && e.canApply)
+        .length;
   }
 
   /// The count on the Leerlingen tab's badge (#179): how many students the list
@@ -1472,25 +1475,18 @@ class ReconcileController extends ChangeNotifier {
   /// own tab, where [classesNeedingAttention] counts them on the rail, and the
   /// Leerlingen list has not shown them since #295.
   ///
-  /// In a passive session it is the summed student school rollups' stored
-  /// pending counts, without the "Klasgroepen" rollup for the same reason, and
-  /// with the same decisions-for-accounts caveat as [staffPendingCount].
+  /// Zero without a linked view, for the reason [staffPendingCount] is (#446):
+  /// the student school rollups count decisions, and one student whose Office
+  /// 365 name and school are both stale is two of them.
   ///
-  /// In an active session, together with [staffPendingCount] this partitions
-  /// [accountsNeedingAttention], the count on the rail's Acties chip.
+  /// Together with [staffPendingCount] this partitions
+  /// [accountsNeedingAttention], the count on the rail's Acties chip, in either
+  /// kind of session.
   int get studentPendingCount {
-    if (_linked != null) {
-      return pendingEntries
-          .where((e) => e.family == 'student' && e.canApply)
-          .length;
-    }
-    var total = 0;
-    for (final r in _rollups) {
-      if (r.level == RollupLevel.school && r.school != staffPartition) {
-        total += r.pendingCount;
-      }
-    }
-    return total;
+    if (_linked == null) return 0;
+    return pendingEntries
+        .where((e) => e.family == 'student' && e.canApply)
+        .length;
   }
 
   /// Builds one [PendingAccountEntry] per target from [actionList], collapsing
@@ -2096,23 +2092,14 @@ class ReconcileController extends ChangeNotifier {
   /// The school-level rollups, alphabetical — the stored per-school aggregates.
   /// They no longer render as nodes in the student drill-down (#210 flattened
   /// that to grade-years), but they are what the per-category summaries and the
-  /// passive-session badge counts are summed from, so they stay materialized.
+  /// passive header count are summed from, so they stay materialized. Not the
+  /// passive tab badges: those count accounts, which a rollup does not (#446).
   List<Rollup> get schoolRollups {
     final schools = [
       for (final r in _rollups)
         if (r.level == RollupLevel.school) r,
     ]..sort((a, b) => a.label.compareTo(b.label));
     return schools;
-  }
-
-  /// The single synthetic staff ("Personeel") school rollup, or `null` when no
-  /// staff account has been materialized — the drill-down root of the Personeel
-  /// tab (#179), which shows only the staff action family.
-  Rollup? get staffSchoolRollup {
-    for (final r in _rollups) {
-      if (r.level == RollupLevel.school && r.school == staffPartition) return r;
-    }
-    return null;
   }
 
   /// The synthetic "Niet toegewezen" school rollup — accounts with no class of
@@ -2137,9 +2124,9 @@ class ReconcileController extends ChangeNotifier {
   /// shape, which matters twice over. `school` is the Cosmos partition key of the
   /// per-account documents, so a classroom node keeps its real school and one
   /// partition can still be read on its own; and [totalPendingCount],
-  /// [staffPendingCount], [studentPendingCount], [schoolRollups] and the
-  /// per-category summaries all aggregate over [RollupLevel.school], so a passive
-  /// session's badges keep reading from data that is still there.
+  /// [schoolRollups] and the per-category summaries all aggregate over
+  /// [RollupLevel.school], so a passive session's counts keep reading from data
+  /// that is still there.
   ///
   /// Since #295 Acties no longer *browses* these: the flat account list renders
   /// straight off the linked view. They stay as the counts every passive surface

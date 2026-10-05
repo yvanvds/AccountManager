@@ -3091,6 +3091,47 @@ ReconcileHarness informationalOnlyHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the passive Acties tab badges (#446): one account in each
+/// family, each owing **two** applyable decisions. The stored rollups count
+/// decisions, so they hold 2 per family where the "met acties" list holds one
+/// row. A badge that quotes them reads double.
+///
+/// The student is [twoAzureWritesHarness]'s Jane: her Office 365 display name is
+/// blank (`ModifyAzureName`) and her `companyName` names another school
+/// (`ModifyAzureSchool`).
+///
+/// The staff member is Anna, in step in all three systems except twice over:
+/// Smartschool holds no copy code for her (`SetStaffCopyCode`), and she is
+/// missing from our manageable `GBS-Personeel` group
+/// (`AddStaffToAzureStaffGroup`, #444).
+///
+/// [store] / [linkedStore] are forwarded so a passive session can be resumed
+/// over the view this one materializes.
+ReconcileHarness twoDecisionAccountsHarness({
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      store: store,
+      linkedStore: linkedStore,
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        staff: [wisaStaff()],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount(), ssStaffAccount(fax: '')],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(
+        users: [azUser(companyName: 'SBE'), azStaffUser()],
+        groups: [azStaffGroup()],
+      ),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the class group Graph will not manage the membership of
 /// (#331) — the reported bug, in the smallest shape that reproduces it.
 ///

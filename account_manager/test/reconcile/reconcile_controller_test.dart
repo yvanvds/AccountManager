@@ -1882,8 +1882,8 @@ void main() {
     });
 
     test(
-        'a passive session counts the same badges over an informational-only '
-        'account (#445)', () async {
+        'a passive session claims no tab-badge count over an informational-only '
+        'account either (#445/#446)', () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
       final active = informationalOnlyHarness(
@@ -1891,6 +1891,8 @@ void main() {
         linkedStore: linkedStore,
       );
       await active.controller.sync();
+      expect(active.controller.staffPendingCount, 1);
+      expect(active.controller.studentPendingCount, 1);
 
       final s2 = await ReconcileHarness.resume(
         store: snapshots,
@@ -1899,14 +1901,67 @@ void main() {
       await s2.controller.loadOverview();
       expect(s2.controller.linked, isNull, reason: 'passive: never linked');
 
-      // The stored rollups count applyable decisions only, and the Klasgroepen
-      // rollup is not a student's.
-      expect(
-          s2.controller.staffPendingCount, active.controller.staffPendingCount);
-      expect(s2.controller.studentPendingCount,
-          active.controller.studentPendingCount);
-      expect(s2.controller.staffPendingCount, 1);
-      expect(s2.controller.studentPendingCount, 1);
+      // Here the stored rollups would even have agreed with the active badges:
+      // Piet and Jane owe one decision each, and the diagnoses count none. That
+      // is this fixture, not a rule (see the two-decision test below), so a
+      // passive session quotes nothing rather than a total it cannot check.
+      expect(s2.controller.staffSummary.pending, 1);
+      expect(s2.controller.studentSummary.pending, 1);
+      expect(s2.controller.staffPendingCount, 0);
+      expect(s2.controller.studentPendingCount, 0);
+      // The badges still partition the rail chip, which says the same.
+      expect(s2.controller.accountsNeedingAttention, 0);
+    });
+
+    test(
+        'an account owing two decisions is one on its tab badge, and a passive '
+        'session never quotes the decision total instead (#446)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final active = twoDecisionAccountsHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await active.controller.sync();
+      expect(active.controller.error, isNull);
+
+      // The fixture really holds one account per family, each owing two
+      // applyable decisions.
+      int applyable(PendingAccountEntry e) =>
+          e.choices.where((c) => c.selected.canApply).length;
+      final staff = active.controller.pendingEntries
+          .where((e) => e.family == 'staff')
+          .toList();
+      final students = active.controller.pendingEntries
+          .where((e) => e.family == 'student')
+          .toList();
+      expect(staff.map((e) => e.target), <String>['Anna Smit']);
+      expect(students.map((e) => e.target), <String>['Jane Doe']);
+      expect(applyable(staff.single), 2);
+      expect(applyable(students.single), 2);
+
+      // An active session counts the rows "met acties" lists: one per tab.
+      expect(active.controller.staffPendingCount, 1);
+      expect(active.controller.studentPendingCount, 1);
+      expect(active.controller.accountsNeedingAttention, 2);
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+      expect(s2.controller.linked, isNull, reason: 'passive: never linked');
+
+      // What the stored view does hold is the decision total — two per family.
+      // Before #446 the passive badges quoted exactly that, and read 2 over a
+      // list of one.
+      expect(s2.controller.staffSummary.pending, 2);
+      expect(s2.controller.studentSummary.pending, 2);
+      // Without a linked view there is no account count to make, so the badges
+      // claim none.
+      expect(s2.controller.staffPendingCount, 0);
+      expect(s2.controller.studentPendingCount, 0);
+      expect(s2.controller.accountsNeedingAttention, 0);
     });
   });
 
@@ -2060,8 +2115,8 @@ void main() {
     });
 
     test(
-        'a passive session projects the same tree from the stored view, with '
-        'its badges and header count untouched', () async {
+        'a passive session projects the same tree and header count from the '
+        'stored view, and claims no tab-badge count (#446)', () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
       final s1 = twoSchoolHarness();
@@ -2091,15 +2146,17 @@ void main() {
         s2.controller.studentRollups.map((r) => r.accountCount),
         active.controller.studentRollups.map((r) => r.accountCount),
       );
-      // The counters read from RollupLevel.school rollups, which the view
+      // The header count reads from RollupLevel.school rollups, which the view
       // projection deliberately left in the store.
       expect(
           s2.controller.totalPendingCount, active.controller.totalPendingCount);
-      expect(s2.controller.studentPendingCount,
-          active.controller.studentPendingCount);
-      expect(
-          s2.controller.staffPendingCount, active.controller.staffPendingCount);
       expect(s2.controller.totalPendingCount, greaterThan(0));
+      // The tab badges do not (#446): they count accounts, which only a linked
+      // view can. The two sessions used to agree here only because every
+      // student in this fixture owes exactly one decision.
+      expect(active.controller.studentPendingCount, greaterThan(0));
+      expect(s2.controller.studentPendingCount, 0);
+      expect(s2.controller.staffPendingCount, 0);
     });
   });
 
