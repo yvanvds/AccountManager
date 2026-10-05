@@ -602,17 +602,28 @@ class AzureIdentityCollision {
 }
 
 /// A per-category summary for the Reconcile overview (#163): how many accounts
-/// (or class groups) the category holds, and how many of them carry an applyable
-/// pending action. Derived from the stored [Rollup]s, so it is readable in a
-/// passive session that never linked — the whole point of the materialized view.
+/// (or class groups) the category holds, and how many applyable decisions are
+/// pending across them. Derived from the stored [Rollup]s, so it is readable in
+/// a passive session that never linked — the whole point of the materialized
+/// view.
 class CategorySummary {
   const CategorySummary({required this.total, required this.pending});
 
   /// The total accounts (students / staff) or class groups in this category.
   final int total;
 
-  /// How many of them carry at least one applyable pending action (the
-  /// informational group notices, which never write, are excluded).
+  /// How many applyable **decisions** are pending across the category: the sum
+  /// of the stored rollups' `pendingCount`, which counts one per choice whose
+  /// selected option writes ([pendingDecisionCount], #251). An either/or counts
+  /// once; an informational notice, which never writes, counts zero.
+  ///
+  /// It is not a count of the accounts or classes with work, so it does not
+  /// share [total]'s unit: a student owed both an Office 365 rename and a
+  /// school fix adds two. The tile renders it as such ("N openstaande acties").
+  /// The account counts are [ReconcileController.accountsNeedingAttention],
+  /// [ReconcileController.staffPendingCount] and
+  /// [ReconcileController.studentPendingCount], and only an active session can
+  /// make them: the view stores no accounts-with-work figure (#446).
   final int pending;
 
   /// The zero state before any sync has materialized a rollup.
@@ -2225,7 +2236,9 @@ class ReconcileController extends ChangeNotifier {
   /// from the stored rollups so they read in a passive session too: students are
   /// every school rollup *except* the synthetic staff bucket, staff is that
   /// bucket, and class groups is the single "Klasgroepen" node. Each is zero
-  /// before any operator has synced.
+  /// before any operator has synced. In all three, [CategorySummary.total]
+  /// counts accounts or classes and [CategorySummary.pending] counts decisions
+  /// (#251), so the two are never in the same unit.
   CategorySummary get studentSummary {
     var total = 0;
     var pending = 0;
