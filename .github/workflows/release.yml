@@ -69,9 +69,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # `version: 1.2.3+4` -> `1.2.3`. The build number after `+` is not part
-          # of a release identity: the installer, the tag and the update check
-          # all compare on the semantic version alone.
+          # `version: 1.2.3` -> `1.2.3`. pubspec.yaml carries no `+N` build
+          # number since #440 — the installer, the tag and the update check all
+          # compare on the semantic version alone, so nothing ever read one.
+          # The cut at `+` stays anyway, so a stray one can neither fail the
+          # tag check below nor reach ISCC (whose VersionInfoVersion rejects
+          # it); refusing one is the job of
+          # account_manager/test/update/pubspec_version_test.dart, on the PR.
           pubspec=$(grep -m1 -E '^version:' account_manager/pubspec.yaml \
             | sed -E 's/^version:[[:space:]]*([^+[:space:]]+).*/\1/')
           if [ -z "$pubspec" ]; then

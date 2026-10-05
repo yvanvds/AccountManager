@@ -58,11 +58,17 @@ void main() {
       expect(pubspec, isNotNull,
           reason: 'no account_manager/pubspec.yaml found above '
               '${Directory.current.path}');
+      // The whole declared value, nothing cut off it (#440): with no `+N`
+      // build number there is nothing between what pubspec.yaml says and what
+      // the executable reports. A `+N` would be stamped into the version
+      // resource and then dropped again by the reader, so it fails here.
       final RegExpMatch? declared =
-          RegExp(r'^version:\s*([^\s+]+)', multiLine: true)
+          RegExp(r'^version:[ \t]*(\S+)[ \t]*$', multiLine: true)
               .firstMatch(pubspec!.readAsStringSync());
       expect(declared, isNotNull);
-      expect(version, declared!.group(1));
+      expect(version, declared!.group(1),
+          reason: 'the running build must report exactly the version '
+              'pubspec.yaml declares — no +N build number since #440');
     });
 
     testWidgets(

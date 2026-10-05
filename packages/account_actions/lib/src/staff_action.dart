@@ -5,6 +5,7 @@ import 'package:wisa_api/wisa_api.dart' as wapi;
 
 import 'action_result.dart';
 import 'apply_options.dart';
+import 'azure_staff_group_placement.dart';
 import 'change_set.dart';
 import 'connectors.dart';
 import 'staff_action_config.dart';
@@ -27,12 +28,14 @@ import 'staff_placement.dart';
 /// **Staff vs student differences.** Staff bridge to Smartschool by
 /// [wapi.WisaStaff.code] (not `wisaId`) — `AddToSmartschool` and
 /// `UpdateWisaName` write the code into `accountId` (spec §4, OQ-1). Staff live
-/// on the base [StaffActionConfig.azureDomain] (no student sub-domain). The
-/// **Office 365** group placement the legacy add-actions perform is out of
-/// scope here (see the package README) — it needs a membership-aware input,
-/// tracked as the `AddToAzureStaffGroup` / `AddToStaffGroup` follow-up. The
-/// Smartschool one is not: since #374 [AddStaffToSmartschool] seats its new
-/// account from an injected [StaffPlacement], which needs no membership at all.
+/// on the base [StaffActionConfig.azureDomain] (no student sub-domain). Group
+/// placement arrives as injected value objects, so the family stays pure: since
+/// #374 [AddStaffToSmartschool] seats its new account from a [StaffPlacement],
+/// and since #444 the Office 365 `<PREFIX>-Personeel` seat — [AddStaffToAzure]'s
+/// post-create join and the standing [AddStaffToAzureStaffGroup] repair — reads
+/// an [AzureStaffGroupPlacement]. The role groups legacy `AddToAzureStaffGroup`
+/// also managed (`-Directie`, `-Secretariaat`) are still not ported (see the
+/// package README).
 sealed class StaffAction {
   /// The linked staff record this action targets, bound at construction.
   final LinkedStaff staff;
@@ -68,16 +71,17 @@ sealed class StaffAction {
   bool get isDefaultAlternative => false;
 
   /// The situation this **informational** action is context for (#329) — see
-  /// [StudentAction.noticeFor]. No staff action carries one: every member of the
-  /// family is applyable today.
+  /// [StudentAction.noticeFor]. No staff action carries one: the family's one
+  /// informational member, [AzureStaffGroupNotManageable] (#444), stands on its
+  /// own rather than beside a decision.
   String? get noticeFor => null;
 
   /// Whether [apply] can perform a change. `false` for an informational action
   /// (the legacy `CanBeApplied == false` case): it surfaces a diagnosis but has
-  /// no automated write, so calling [apply] throws. Every staff action is
-  /// applyable today, so this is always `true`; the getter exists so the UI's
-  /// apply affordance and the follow-up walk (#240) read the flag off the action
-  /// for every family instead of assuming it for this one. See
+  /// no automated write, so calling [apply] throws. Every staff action but one
+  /// is applyable; the exception is [AzureStaffGroupNotManageable] (#444), which
+  /// is why the UI's apply affordance and the follow-up walk (#240) read the flag
+  /// off the action for every family instead of assuming it. See
   /// [StudentAction.canApply] and [GroupAction.canApply].
   bool get canApply => true;
 
@@ -89,11 +93,9 @@ sealed class StaffAction {
   /// than in the screen, and for the line legacy drew between mechanical and
   /// judgement work.
   ///
-  /// Legacy granted it to three staff actions. Two are ported and override this
-  /// ([AddStaffToAzure], [ModifySmartschoolStaffEmail]); the third,
-  /// `AddToStaffGroup`, is the Office 365 `-Personeel` placement this package
-  /// still defers (see the README), so there is no Dart action to carry the
-  /// grant yet.
+  /// Legacy granted it to three staff actions, and all three are ported and
+  /// override this: [AddStaffToAzure], [ModifySmartschoolStaffEmail] and — since
+  /// #444 — `AddToStaffGroup` as [AddStaffToAzureStaffGroup].
   bool get canApplyToAll => false;
 
   /// Whether this action's write is stamped with [ApplyOptions.deletionDate]
@@ -205,10 +207,22 @@ sealed class StaffAction {
 const String staffImportAlternative = 'staff-import';
 
 /// Create an Office 365 account for a staff member present in WISA but not
-/// Azure. Ported from `Action\StaffAccount\AddToAzure` (the `-Personeel` group
-/// placement is deferred — see the README).
+/// Azure. Ported from `Action\StaffAccount\AddToAzure`, including — since #444 —
+/// its follow-up write: the new account joins `<PREFIX>-Personeel` (see
+/// [_joinStaffGroups]).
 class AddStaffToAzure extends StaffAction {
-  const AddStaffToAzure(super.staff, super.config);
+  const AddStaffToAzure(super.staff, super.config, {this.azureGroupPlacement});
+
+  /// The Office 365 staff group(s) the new account must join (#444). `null`
+  /// creates the account and joins nothing — the behaviour every release before
+  /// #444 had, kept as the no-context default so a headless caller, or a test
+  /// that is not about the seat, reads unchanged. The State layer always wires
+  /// it.
+  ///
+  /// Its [AzureStaffGroupPlacement.memberOfGroupIds] is necessarily empty here
+  /// (there is no account yet to be a member), so every group it names is one
+  /// to join.
+  final AzureStaffGroupPlacement? azureGroupPlacement;
 
   @override
   bool evaluate() => staff.wisa != null && staff.azure == null;
@@ -254,9 +268,18 @@ class AddStaffToAzure extends StaffAction {
   String _projectedUpn() =>
       '${_slug(_wisa.firstName)}.${_slug(_wisa.lastName)}@${config.azureDomain}';
 
+  /// Whether the create is followed by the staff-group seat at all (#444):
+  /// a placement was wired and WISA places this staff member in a school we
+  /// manage. A sibling school's teacher is never put in *our* staff group.
+  bool get _seatsInStaffGroup =>
+      azureGroupPlacement != null && staff.isInOurWisa;
+
   @override
   ChangeSet describeChanges() {
     final wisa = _wisa;
+    final joins = _seatsInStaffGroup
+        ? azureGroupPlacement!.joinableGroups
+        : const <az.AzureGroup>[];
     return ChangeSet(
       system: Origin.azure,
       summary: 'Maak een nieuw Office 365 account',
@@ -265,6 +288,14 @@ class AddStaffToAzure extends StaffAction {
         FieldChange('displayName', after: _displayName),
         FieldChange('employeeId', after: wisa.wisaId?.value),
         FieldChange('department', after: config.schoolPrefix),
+        // The seat the create performs right after (#444), so the confirmation
+        // says the new colleague lands in the staff group — one line per group,
+        // since the tenant may hold a security group and a Team of that name.
+        for (final group in joins)
+          FieldChange(
+            'Office 365-groep (${_azureGroupKind(group)})',
+            after: group.displayName,
+          ),
       ],
     );
   }
@@ -340,17 +371,103 @@ class AddStaffToAzure extends StaffAction {
         department: config.schoolPrefix,
         forceChangePasswordNextSignIn: true,
       );
+      // The seat is best-effort, so it cannot change this action's outcome —
+      // the create is the success criterion (INV-41), exactly as it is for
+      // `AddStaffToSmartschool`'s group seat. Each join that landed names its
+      // group, so the State layer can splice the membership without a re-pull;
+      // each one that did not says so in a warning.
+      final seated = await _joinStaffGroups(connectors, created);
       return ActionResult(
         outcome: ActionOutcome.applied,
         changes: changes,
         system: Origin.azure,
         azure: created,
+        joinedAzureGroupIds: seated.joined,
+        warnings: seated.warnings,
         generatedPassword: password,
       );
     } on Object catch (e) {
       return _failed(changes, Origin.azure, e);
     }
   }
+
+  /// Adds the freshly created account to every `<PREFIX>-Personeel` group whose
+  /// membership Graph manages (#444) — the write legacy `AddToAzure.Apply`
+  /// chained after its create, for the security group and the staff Team alike.
+  ///
+  /// It matters beyond tidiness: the tenant licenses staff through these groups,
+  /// so an account outside them has no Office licence (legacy's own description
+  /// of `AddToAzureStaffGroup` says as much).
+  ///
+  /// **Best-effort, by design.** A failed join must not fail — and so retry —
+  /// the create (INV-41): a retried create would find the account by
+  /// `employeeId` and refuse, leaving the operator with an error for an account
+  /// that exists. Unlike the Smartschool seat, a miss here *does* have a safety
+  /// net — the next link sees the account outside the group and raises
+  /// [AddStaffToAzureStaffGroup] — but the operator still reads "the account was
+  /// made, the group was not" right away, for every way the join missed:
+  ///
+  /// - no group of that name exists at all;
+  /// - the group is mastered by Exchange Online (#331), where Graph refuses the
+  ///   write, so it is never attempted and the warning names where to go;
+  /// - Graph refused or the call threw — including the replication lag that can
+  ///   make a just-created user briefly unknown to a group write.
+  Future<_AzureSeatOutcome> _joinStaffGroups(
+    Connectors connectors,
+    az.AzureUser created,
+  ) async {
+    if (!_seatsInStaffGroup) return const _AzureSeatOutcome();
+    final placement = azureGroupPlacement!;
+    final name = placement.groupName;
+    if (name == null) return const _AzureSeatOutcome();
+
+    if (!placement.groupExists) {
+      return _AzureSeatOutcome(warnings: <String>[
+        'Het Office 365-account is aangemaakt, maar de groep $name bestaat '
+            'niet in Office 365. Voeg het account toe aan de personeelsgroep '
+            'van de school; zonder die groep krijgt het geen licentie.',
+      ]);
+    }
+
+    final warnings = <String>[
+      for (final group in placement.unmanagedMissingGroups)
+        'Het Office 365-account is aangemaakt, maar ${group.displayName} is een '
+            '${_azureGroupKind(group)} die in Exchange Online beheerd wordt; '
+            'Graph kan er geen leden aan toevoegen. Voeg het account daar toe.',
+    ];
+    final joined = <String>[];
+    final groups = _requireAzure(connectors).groups;
+    for (final group in placement.joinableGroups) {
+      try {
+        await groups.addMember(group.id, created.id);
+        joined.add(group.id);
+      } on Object catch (e) {
+        warnings.add(
+          'Het Office 365-account is aangemaakt, maar het toevoegen aan '
+          '${group.displayName} (${_azureGroupKind(group)}) is mislukt: $e. '
+          'De app stelt het lidmaatschap opnieuw voor na de volgende '
+          'synchronisatie.',
+        );
+      }
+    }
+    return _AzureSeatOutcome(joined: joined, warnings: warnings);
+  }
+}
+
+/// What [AddStaffToAzure]'s best-effort staff-group seat ended up doing (#444):
+/// the groups the new account demonstrably joined, plus the operator-facing
+/// notes the caller must not drop. The Azure twin of [_SeatOutcome].
+class _AzureSeatOutcome {
+  const _AzureSeatOutcome({
+    this.joined = const <String>[],
+    this.warnings = const <String>[],
+  });
+
+  /// The object ids of the groups the account was actually added to.
+  final List<String> joined;
+
+  /// Reasons a join did not land that the operator must still see.
+  final List<String> warnings;
 }
 
 /// Create a Smartschool account for a staff member present in WISA and Azure
@@ -511,7 +628,8 @@ class AddStaffToSmartschool extends StaffAction {
   /// has been putting every staff account it ever made, and where nothing later
   /// finds them. That is why the writes need no membership knowledge and were
   /// wrongly deferred with the genuinely membership-aware `AddToStaffGroup` /
-  /// `AddToAzureStaffGroup` (see the README).
+  /// `AddToAzureStaffGroup` — the Office 365 half of which #444 later ported as
+  /// [AddStaffToAzureStaffGroup] (see the README).
   ///
   /// **Best-effort, by design.** The create is this action's success criterion;
   /// a failed seat must not fail — and so retry — the create (INV-41), which
@@ -675,7 +793,7 @@ class _SeatOutcome {
   final Group? left;
 
   /// Reasons a seat did not land that the operator must still see, since
-  /// nothing downstream re-proposes a staff group placement.
+  /// nothing downstream re-proposes a Smartschool staff group placement.
   final List<String> warnings;
 }
 
@@ -1384,6 +1502,216 @@ class ClaimStaffForAzureSchool extends StaffAction {
   }
 }
 
+/// Add a staff member of our school to the Office 365 staff group
+/// `<PREFIX>-Personeel` they are missing from (#444). Ported from legacy
+/// `Action\StaffAccount\AddToStaffGroup` ("Toevoegen aan SSM-Personeel in
+/// Office365" — *"Elk personeelslid hoort in het team personeel te zitten"*),
+/// with the group named from the school prefix rather than hard-coded.
+///
+/// It is the standing half of the seat [AddStaffToAzure] performs on a create:
+/// the create only reaches new hires, and only when its join lands, whereas
+/// this catches every existing account outside the group — the teachers whose
+/// accounts the port created before #444, the ones adopted from a sibling
+/// school, and a create whose join missed. Without it the Entra portal was the
+/// only place the gap showed, and the tenant licenses staff through this group.
+///
+/// **Only staff WISA places in a school we manage** ([LinkedStaff.isInOurWisa]),
+/// never decided from Azure `department`: that field is other software's and
+/// lists every school a teacher works at (`GBS,SSM`, #237). A teacher who
+/// belongs only to a sibling school is left alone.
+///
+/// **Every group of that name whose membership Graph manages.** Legacy joined
+/// the security group *and* the Microsoft 365 group behind the staff Team; so
+/// does this, one write per group the account is missing from
+/// ([AzureStaffGroupPlacement.joinableGroups]). A group Exchange Online masters
+/// (#331) is not written to — [AzureStaffGroupNotManageable] states it instead,
+/// so the two never offer one membership twice.
+///
+/// Nothing is raised when no group of that name exists: that is a property of
+/// the tenant, not of each teacher, and the State layer logs it once per sync.
+/// Removing someone who left from the group is **not** this action's job.
+class AddStaffToAzureStaffGroup extends StaffAction {
+  /// The staff-group context this action reads, injected by the dispatch.
+  final AzureStaffGroupPlacement placement;
+
+  const AddStaffToAzureStaffGroup(super.staff, super.config, this.placement);
+
+  @override
+  bool evaluate() =>
+      staff.isInOurWisa &&
+      staff.azure != null &&
+      _az.id.trim().isNotEmpty &&
+      placement.joinableGroups.isNotEmpty;
+
+  /// **Bulk-applyable** — legacy granted `AddToStaffGroup` the same
+  /// (`AccountAction(…, true, true)`). The write is additive and mechanical: it
+  /// takes nobody out of anything, it only adds a colleague WISA already places
+  /// here to the group every colleague belongs in, and a member who is already
+  /// there does not evaluate true.
+  @override
+  bool get canApplyToAll => true;
+
+  /// The group name, and for every group of that name whether the account is a
+  /// member — the detail legacy's `AddToAzureStaffGroup` showed as a table.
+  @override
+  ChangeSet describeChanges() {
+    final name = placement.groupName ?? '';
+    final joinable = placement.joinableGroups.map((g) => g.id).toSet();
+    final unmanaged = placement.unmanagedMissingGroups.map((g) => g.id).toSet();
+    return ChangeSet(
+      system: Origin.azure,
+      summary: 'Voeg het account toe aan de Office 365-groep $name',
+      fields: [
+        for (final group in placement.groups)
+          if (joinable.contains(group.id))
+            FieldChange(
+              _membershipField(group),
+              before: 'nee',
+              after: 'ja',
+            )
+          else if (unmanaged.contains(group.id))
+            FieldChange.statement(
+              _membershipField(group),
+              'nee (beheerd in Exchange Online)',
+            )
+          else
+            FieldChange.statement(_membershipField(group), 'ja'),
+      ],
+    );
+  }
+
+  @override
+  Future<ActionResult> apply(
+    Connectors connectors,
+    ApplyOptions options,
+  ) async {
+    final changes = describeChanges();
+    final account = _az;
+    final targets = placement.joinableGroups;
+
+    if (options.dryRun) {
+      return ActionResult(
+        outcome: ActionOutcome.dryRun,
+        changes: changes,
+        system: Origin.azure,
+        azure: account,
+      );
+    }
+
+    final groups = _requireAzure(connectors).groups;
+    final joined = <String>[];
+    final misses = <String>[];
+    for (final group in targets) {
+      try {
+        await groups.addMember(group.id, account.id);
+        joined.add(group.id);
+      } on Object catch (e) {
+        misses.add('${group.displayName} (${_azureGroupKind(group)}): $e');
+      }
+    }
+
+    // Nothing landed: an ordinary failure, retried by the next apply.
+    if (joined.isEmpty) {
+      return _failed(
+        changes,
+        Origin.azure,
+        StateError(
+          'Toevoegen aan ${placement.groupName} mislukt — ${misses.join('; ')}',
+        ),
+      );
+    }
+
+    // Some landed: those are real, so they are reported as applied and spliced
+    // into the snapshot. Failing the whole action would leave the snapshot
+    // without them, and the retry would ask Graph to add a member it already
+    // has — which it refuses. The relink re-raises this action for exactly the
+    // groups still missing.
+    return ActionResult(
+      outcome: ActionOutcome.applied,
+      changes: changes,
+      system: Origin.azure,
+      // The account itself is unchanged: a membership is not a field on it.
+      // It still rides along so the State layer knows whose membership the
+      // [ActionResult.joinedAzureGroupIds] are — the same shape as a class
+      // move returning its unchanged account beside `movedToClass` (#341).
+      azure: account,
+      joinedAzureGroupIds: joined,
+      warnings: <String>[
+        for (final miss in misses)
+          'Het toevoegen aan $miss is mislukt. De app stelt het opnieuw voor.',
+      ],
+    );
+  }
+}
+
+/// A staff member of our school who is missing from a `<PREFIX>-Personeel`
+/// group **Graph cannot write to** (#444) — a mail-enabled security group or a
+/// distribution list, both mastered by Exchange Online (#331).
+///
+/// The membership is diagnosed all the same, because the gap is real and has a
+/// cost (no group, no licence), but **informational** (`canApply == false`):
+/// Graph refuses every membership write on such a group, so a proposal would
+/// fail wholesale, return on the next pass, and never go away — the loop #331
+/// was filed to break for class groups. The staff twin of
+/// [AzureClassGroupMembership]'s Exchange instruction: the row names the group,
+/// says what kind it is, and sends the operator to Exchange Online.
+///
+/// It and [AddStaffToAzureStaffGroup] partition the groups the account is
+/// missing from, so a group is either written to or stated here, never both.
+/// When the tenant holds one of each and the account is missing from both, the
+/// card carries one write and this notice.
+class AzureStaffGroupNotManageable extends StaffAction {
+  /// The staff-group context this action reads, injected by the dispatch.
+  final AzureStaffGroupPlacement placement;
+
+  const AzureStaffGroupNotManageable(
+    super.staff,
+    super.config,
+    this.placement,
+  );
+
+  @override
+  bool evaluate() =>
+      staff.isInOurWisa &&
+      staff.azure != null &&
+      placement.unmanagedMissingGroups.isNotEmpty;
+
+  @override
+  bool get canApply => false;
+
+  @override
+  ChangeSet describeChanges() {
+    final missing = placement.unmanagedMissingGroups;
+    final kinds = missing.map(_azureGroupKind).toSet().join(' / ');
+    return ChangeSet(
+      system: Origin.azure,
+      summary: 'Ontbreekt in de Office 365-groep ${placement.groupName}. Die '
+          'groep is een $kinds en wordt in Exchange Online beheerd; Graph kan '
+          'de ledenlijst niet bijwerken. Voeg het account daar toe.',
+      // Nothing is written, so nothing moves (#305): these lines describe the
+      // group the operator is being sent to Exchange Online for.
+      fields: [
+        for (final group in missing) ...[
+          FieldChange.statement(_membershipField(group), 'nee'),
+          if ((group.mail ?? '').trim().isNotEmpty)
+            FieldChange.statement(
+              'mail (${group.displayName})',
+              group.mail!.trim(),
+            ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Future<ActionResult> apply(Connectors connectors, ApplyOptions options) =>
+      throw UnsupportedError(
+        'AzureStaffGroupNotManageable is informational and cannot be applied '
+        '(canApply is false) — Graph refuses every membership write on an '
+        'Exchange-mastered group',
+      );
+}
+
 /// Correct the Smartschool internal number to equal the WISA staff
 /// [wapi.WisaStaff.code] (staff bridge to Smartschool, spec §4). Ported from
 /// `Action\StaffAccount\UpdateWisaName`.
@@ -1611,6 +1939,26 @@ extension _SmartschoolSave on StaffAction {
 // ---------------------------------------------------------------------------
 // Free helpers.
 // ---------------------------------------------------------------------------
+
+/// What kind of Office 365 group [group] is, in the operator's words (#444).
+///
+/// The staff group can exist twice under one name — a security group and the
+/// Microsoft 365 group behind the staff Team — so a line that names only
+/// `SSM-Personeel` would not say which of the two it means. All four shapes
+/// Graph distinguishes are named, the two Exchange-mastered ones (#331) in the
+/// same words the class-group notice uses.
+String _azureGroupKind(az.AzureGroup group) {
+  if (group.isUnified) return 'Microsoft 365-groep';
+  if (!group.mailEnabled) return 'beveiligingsgroep';
+  return group.securityEnabled
+      ? 'mail-enabled beveiligingsgroep'
+      : 'distributielijst';
+}
+
+/// The membership line a staff-group action shows for [group]: its name and
+/// kind, so two groups of one name read apart (#444).
+String _membershipField(az.AzureGroup group) =>
+    'lid van ${group.displayName} (${_azureGroupKind(group)})';
 
 /// The Smartschool user parameter the copy-code (photocopier PIN) is stored
 /// in, alongside the account's `fax` field. Legacy literal: `PINCODE CANON`.

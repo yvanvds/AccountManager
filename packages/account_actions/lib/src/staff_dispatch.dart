@@ -1,5 +1,6 @@
 import 'package:account_core/account_core.dart';
 
+import 'azure_staff_group_placement.dart';
 import 'staff_action.dart';
 import 'staff_action_config.dart';
 import 'staff_placement.dart';
@@ -17,9 +18,17 @@ import 'staff_placement.dart';
 /// [StaffAction.evaluate] returns true. Pure and deterministic (INV-40): same
 /// staff + same [config] ⇒ same list.
 ///
-/// The legacy `AddToAzureStaffGroup` / `AddToStaffGroup` actions are **not**
-/// dispatched here: they evaluate against Office 365 group membership, which a
-/// [LinkedStaff] does not carry (see the package README).
+/// [azureGroupPlacementFor] supplies the Office 365 `<PREFIX>-Personeel`
+/// placement per record (#444) — the membership a [LinkedStaff] does not carry,
+/// resolved by the State layer (`AzureStaffGroupResolver`), exactly as the
+/// student dispatch takes its `azurePlacementFor`. It wires three things: the
+/// post-create join inside [AddStaffToAzure], and in the modify branch the
+/// legacy `AddToStaffGroup` as [AddStaffToAzureStaffGroup] plus its
+/// Exchange-mastered counterpart [AzureStaffGroupNotManageable]. It is
+/// **opt-in**: without it neither modify action is considered and the create
+/// joins nothing, exactly as before #444. The role groups legacy
+/// `AddToAzureStaffGroup` also managed (`-Directie`, `-Secretariaat`) are not
+/// dispatched (see the package README).
 ///
 /// [placement] is the Smartschool group seat a *new* staff account needs (#374)
 /// — the same one for every record, so it arrives as a value rather than as the
@@ -67,7 +76,9 @@ List<StaffAction> staffActionsFor(
   LinkedStaff staff,
   StaffActionConfig config, {
   StaffPlacement? placement,
+  AzureStaffGroupPlacement Function(LinkedStaff staff)? azureGroupPlacementFor,
 }) {
+  final azureGroup = azureGroupPlacementFor?.call(staff);
   // "Complete" (modify branch) requires presence in *our* WISA, not merely
   // anywhere in the group — the staff half of the same rule the student dispatch
   // has followed since #134, adopted here in #349. A teacher who moved to a
@@ -88,6 +99,13 @@ List<StaffAction> staffActionsFor(
           // account for us — see the note above for why it is not the #237
           // rewrite.
           ClaimStaffForAzureSchool(staff, config),
+          // The staff-group membership (#444), with the other Office 365
+          // writes. The two partition the groups the account is missing from:
+          // the ones Graph can write to, and the ones Exchange Online masters.
+          if (azureGroup != null) ...[
+            AddStaffToAzureStaffGroup(staff, config, azureGroup),
+            AzureStaffGroupNotManageable(staff, config, azureGroup),
+          ],
         ]
       : <StaffAction>[
           // The creates lead [DontImportStaffFromWisa], which they are mutually
@@ -95,7 +113,7 @@ List<StaffAction> staffActionsFor(
           // radio pair in, and the fallback the grouping uses if a default is
           // ever forgotten — so the provisioning half comes first, never the
           // blacklist.
-          AddStaffToAzure(staff, config),
+          AddStaffToAzure(staff, config, azureGroupPlacement: azureGroup),
           AddStaffToSmartschool(staff, config, placement: placement),
           // The departure pair (#349), conservative half first: that is the
           // order the operator reads the radio pair in, and the order
@@ -126,8 +144,14 @@ List<StaffAction> staffActions(
   LinkedSnapshot snapshot,
   StaffActionConfig config, {
   StaffPlacement? placement,
+  AzureStaffGroupPlacement Function(LinkedStaff staff)? azureGroupPlacementFor,
 }) =>
     [
       for (final staff in snapshot.staff)
-        ...staffActionsFor(staff, config, placement: placement),
+        ...staffActionsFor(
+          staff,
+          config,
+          placement: placement,
+          azureGroupPlacementFor: azureGroupPlacementFor,
+        ),
     ];

@@ -21,9 +21,9 @@
 ///
 /// Neither is wired into the app. The repair is a **one-off**: after #374 the
 /// mis-seating cannot recur through the app, so a standing action would have to
-/// carry Smartschool group membership on `LinkedStaff` — the membership-aware
-/// follow-up `AddToStaffGroup` / `AddToAzureStaffGroup` are also waiting on —
-/// to keep proposing a repair nothing can produce any more. The entry point is
+/// read Smartschool group membership — the kind of membership-aware input #444
+/// later built for the Office 365 staff group — to keep proposing a repair
+/// nothing can produce any more. The entry point is
 /// `tool/staff_seat_repair.dart`, run by hand: the repair writes to Smartschool,
 /// and the project's live-testing policy keeps write-capable runs manual.
 library;

@@ -23,6 +23,12 @@ List<ApplyStep> recordSteps(ReconcileController controller) {
   return steps;
 }
 
+/// Every student classroom rollup [controller] holds, across the managed
+/// schools and the "Niet toegewezen" bucket — the stored view, read through the
+/// [ReconcileController.studentRollups] test seam (#448).
+Iterable<Rollup> studentClassrooms(ReconcileController controller) =>
+    controller.studentRollups.expand(controller.studentChildrenOf);
+
 /// A [SignalPublisher] whose every publish throws — to prove a broadcast
 /// failure is swallowed and never fails the pass that triggered it (#116).
 class _ThrowingPublisher implements SignalPublisher {
@@ -1851,6 +1857,118 @@ void main() {
       expect(classroom.single.decisions, hasLength(1),
           reason: 'the surviving decision is re-attached to the account doc');
     });
+
+    test(
+        'a family tab counts the accounts with an applyable decision, never '
+        'one whose only item is informational and never a class (#445)',
+        () async {
+      final h = informationalOnlyHarness();
+      await h.controller.sync();
+      expect(h.controller.error, isNull);
+
+      // The fixture really holds the diagnoses, as pending entries the
+      // badges could have counted.
+      String nameOf(PendingAccountEntry e) => e.target;
+      final entries = h.controller.pendingEntries;
+      expect(
+        entries.where((e) => e.family == 'staff' && !e.canApply).map(nameOf),
+        <String>['Anna Smit'],
+      );
+      expect(
+        entries.where((e) => e.family == 'student' && !e.canApply).map(nameOf),
+        unorderedEquals(<String>['Joe Janssens', 'Jim Jacobs']),
+      );
+      expect(entries.where((e) => e.family == 'group'), isNotEmpty);
+
+      // Piet and Jane, whose rows are the only ones under "met acties".
+      expect(h.controller.staffPendingCount, 1);
+      expect(h.controller.studentPendingCount, 1);
+      // Two tabs, one rail chip: the badges partition what the chip counts.
+      expect(h.controller.accountsNeedingAttention, 2);
+    });
+
+    test(
+        'a passive session claims no tab-badge count over an informational-only '
+        'account either (#445/#446)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final active = informationalOnlyHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await active.controller.sync();
+      expect(active.controller.staffPendingCount, 1);
+      expect(active.controller.studentPendingCount, 1);
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+      expect(s2.controller.linked, isNull, reason: 'passive: never linked');
+
+      // Here the stored rollups would even have agreed with the active badges:
+      // Piet and Jane owe one decision each, and the diagnoses count none. That
+      // is this fixture, not a rule (see the two-decision test below), so a
+      // passive session quotes nothing rather than a total it cannot check.
+      expect(s2.controller.staffSummary.pending, 1);
+      expect(s2.controller.studentSummary.pending, 1);
+      expect(s2.controller.staffPendingCount, 0);
+      expect(s2.controller.studentPendingCount, 0);
+      // The badges still partition the rail chip, which says the same.
+      expect(s2.controller.accountsNeedingAttention, 0);
+    });
+
+    test(
+        'an account owing two decisions is one on its tab badge, and a passive '
+        'session never quotes the decision total instead (#446)', () async {
+      final snapshots = InMemorySnapshotStore();
+      final linkedStore = InMemoryLinkedStore();
+      final active = twoDecisionAccountsHarness(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await active.controller.sync();
+      expect(active.controller.error, isNull);
+
+      // The fixture really holds one account per family, each owing two
+      // applyable decisions.
+      int applyable(PendingAccountEntry e) =>
+          e.choices.where((c) => c.selected.canApply).length;
+      final staff = active.controller.pendingEntries
+          .where((e) => e.family == 'staff')
+          .toList();
+      final students = active.controller.pendingEntries
+          .where((e) => e.family == 'student')
+          .toList();
+      expect(staff.map((e) => e.target), <String>['Anna Smit']);
+      expect(students.map((e) => e.target), <String>['Jane Doe']);
+      expect(applyable(staff.single), 2);
+      expect(applyable(students.single), 2);
+
+      // An active session counts the rows "met acties" lists: one per tab.
+      expect(active.controller.staffPendingCount, 1);
+      expect(active.controller.studentPendingCount, 1);
+      expect(active.controller.accountsNeedingAttention, 2);
+
+      final s2 = await ReconcileHarness.resume(
+        store: snapshots,
+        linkedStore: linkedStore,
+      );
+      await s2.controller.loadOverview();
+      expect(s2.controller.linked, isNull, reason: 'passive: never linked');
+
+      // What the stored view does hold is the decision total — two per family.
+      // Before #446 the passive badges quoted exactly that, and read 2 over a
+      // list of one.
+      expect(s2.controller.staffSummary.pending, 2);
+      expect(s2.controller.studentSummary.pending, 2);
+      // Without a linked view there is no account count to make, so the badges
+      // claim none.
+      expect(s2.controller.staffPendingCount, 0);
+      expect(s2.controller.studentPendingCount, 0);
+      expect(s2.controller.accountsNeedingAttention, 0);
+    });
   });
 
   group('category overview summaries (#163)', () {
@@ -2003,8 +2121,8 @@ void main() {
     });
 
     test(
-        'a passive session projects the same tree from the stored view, with '
-        'its badges and header count untouched', () async {
+        'a passive session projects the same tree and category summaries from '
+        'the stored view, and claims no tab-badge count (#446/#447)', () async {
       final snapshots = InMemorySnapshotStore();
       final linkedStore = InMemoryLinkedStore();
       final s1 = twoSchoolHarness();
@@ -2034,15 +2152,24 @@ void main() {
         s2.controller.studentRollups.map((r) => r.accountCount),
         active.controller.studentRollups.map((r) => r.accountCount),
       );
-      // The counters read from RollupLevel.school rollups, which the view
-      // projection deliberately left in the store.
-      expect(
-          s2.controller.totalPendingCount, active.controller.totalPendingCount);
-      expect(s2.controller.studentPendingCount,
-          active.controller.studentPendingCount);
-      expect(
-          s2.controller.staffPendingCount, active.controller.staffPendingCount);
-      expect(s2.controller.totalPendingCount, greaterThan(0));
+      // The Synchronisatie overview's category tiles read the RollupLevel.school
+      // and "Klasgroepen" rollups, which the view projection deliberately left
+      // in the store. Both sessions read the same stored rollups, so these agree
+      // whatever the fixture: what they tally (decisions, #251) is not at issue.
+      (int, int) tile(CategorySummary s) => (s.total, s.pending);
+      expect(tile(s2.controller.studentSummary),
+          tile(active.controller.studentSummary));
+      expect(tile(s2.controller.staffSummary),
+          tile(active.controller.staffSummary));
+      expect(tile(s2.controller.groupSummary),
+          tile(active.controller.groupSummary));
+      expect(s2.controller.studentSummary.pending, greaterThan(0));
+      // The tab badges do not (#446): they count accounts, which only a linked
+      // view can. The two sessions used to agree here only because every
+      // student in this fixture owes exactly one decision.
+      expect(active.controller.studentPendingCount, greaterThan(0));
+      expect(s2.controller.studentPendingCount, 0);
+      expect(s2.controller.staffPendingCount, 0);
     });
   });
 
@@ -2126,9 +2253,9 @@ void main() {
       expect(h.controller.classesNeedingAttention, 2);
 
       // Accounts, not actions. The view holds three pending cards — Sam plus
-      // the two classes — so neither the total nor the class half is the
+      // the two classes — so neither the whole list nor the class half is the
       // number the Klasgroepen pointer wants.
-      expect(h.controller.totalPendingCount, 3);
+      expect(h.controller.pendingEntries, hasLength(3));
       expect(h.controller.accountsNeedingAttention, 1);
       expect(h.controller.groupPendingEntries, hasLength(2));
     });
@@ -2175,10 +2302,7 @@ void main() {
       // The overview came from the store.
       expect(s2.controller.hasOverview, isTrue);
       expect(s2.controller.syncState.generation, 1);
-      final classroom = s2.controller.schoolRollups
-          .expand((s) => s2.controller.childrenOf(s.key))
-          .expand((g) => s2.controller.childrenOf(g.key))
-          .single;
+      final classroom = studentClassrooms(s2.controller).single;
       expect(classroom.accountCount, 1);
 
       // Still no pull.
@@ -2400,10 +2524,7 @@ void main() {
       );
       await s2.controller.loadOverview();
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3C'),
       );
 
@@ -2421,10 +2542,7 @@ void main() {
       expect(s2.controller.syncState.generation, 2);
       // 3D now exists in the refreshed rollups, and 3C is gone with it.
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         <String>['3D'],
       );
     });
@@ -2456,10 +2574,7 @@ void main() {
       );
       await s2.controller.loadOverview();
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3C'),
       );
 
@@ -2476,10 +2591,7 @@ void main() {
       await s2.controller.resyncFromStore();
       expect(s2.controller.syncState.generation, 2);
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3D'),
       );
     });
@@ -2788,10 +2900,7 @@ void main() {
       // Session 2 caught up from the signal alone — no direct onStoreChanged.
       expect(s2.controller.syncState.generation, 2);
       expect(
-        s2.controller.schoolRollups
-            .expand((s) => s2.controller.childrenOf(s.key))
-            .expand((g) => s2.controller.childrenOf(g.key))
-            .map((c) => c.classroom),
+        studentClassrooms(s2.controller).map((c) => c.classroom),
         contains('3D'),
       );
     });
@@ -3313,6 +3422,46 @@ void main() {
             .where((l) => l.contains('Dubbel Office 365-account')),
         isEmpty,
       );
+    });
+  });
+
+  group('the Office 365 staff group (#444)', () {
+    /// The log lines that report the staff group missing.
+    List<LogEntry> missingGroupLines(ReconcileHarness h) => h.log.entries
+        .where(
+            (e) => e.message.contains('Geen Office 365-groep "GBS-Personeel"'))
+        .toList();
+
+    test('a tenant without <PREFIX>-Personeel is told so once, as a message',
+        () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      final lines = missingGroupLines(h);
+      expect(lines, hasLength(1),
+          reason: 'one line per pass, never one per staff member');
+      expect(lines.single.isError, isFalse,
+          reason: 'nothing failed: it is a fact about the tenant');
+      expect(lines.single.origin, core.Origin.azure);
+    });
+
+    test('an apply\'s relink does not repeat it', () async {
+      final h = ReconcileHarness();
+      await h.controller.sync();
+
+      await h.controller.applyEntries(h.controller.pendingEntries);
+
+      expect(h.controller.applyResults, isNotEmpty);
+      expect(missingGroupLines(h), hasLength(1));
+    });
+
+    test('a tenant that has the group hears nothing about it', () async {
+      final h = ReconcileHarness(
+        azure: azSnap(users: [azUser()], groups: [azStaffGroup()]),
+      );
+      await h.controller.sync();
+
+      expect(missingGroupLines(h), isEmpty);
     });
   });
 

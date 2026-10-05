@@ -547,7 +547,20 @@ class StateApplier {
           // below sees the class as provisioned/in sync without a re-pull.
           app.azure.patch(_putAzureGroup(current, result.azureGroup!));
         } else if (result.azure != null) {
-          app.azure.patch(_putAzureUser(current, result.azure!));
+          var patched = _putAzureUser(current, result.azure!);
+          // A staff-group join (#444) — the create's seat or the standing
+          // repair — changes the *group's* member list, not the account, so the
+          // ids it names are spliced in as well. Otherwise the relink below
+          // would still read the account outside `<PREFIX>-Personeel` and
+          // re-raise the very join that just landed.
+          if (result.joinedAzureGroupIds.isNotEmpty) {
+            patched = _joinAzureGroups(
+              patched,
+              memberId: result.azure!.id,
+              groupIds: result.joinedAzureGroupIds,
+            );
+          }
+          app.azure.patch(patched);
         }
       case core.Origin.all:
       case core.Origin.other:
@@ -959,6 +972,36 @@ az.AzureSnapshot _putAzureGroup(
     deltaToken: current.deltaToken,
     users: current.users,
     groups: groups,
+  );
+}
+
+/// [current] with [memberId] added to every group in [groupIds] — the membership
+/// half of a staff-group join (#444).
+///
+/// Applied to each group **as the snapshot holds it now**, never to a record the
+/// action carried: a bulk pass joins colleague after colleague to the same
+/// group, and every join must land on top of the ones before it. A group that
+/// already lists the member is left alone, so re-running a join cannot list
+/// anyone twice, and a group the snapshot no longer holds is skipped — there is
+/// nothing local to patch. Group order is preserved, unlike the record splices
+/// above: no record is replaced, only a member list grows.
+az.AzureSnapshot _joinAzureGroups(
+  az.AzureSnapshot current, {
+  required String memberId,
+  required List<String> groupIds,
+}) {
+  final joined = groupIds.toSet();
+  return az.AzureSnapshot(
+    fetchedAt: current.fetchedAt,
+    deltaToken: current.deltaToken,
+    users: current.users,
+    groups: [
+      for (final g in current.groups)
+        if (joined.contains(g.id) && !g.hasMember(memberId))
+          g.withMembers([...g.memberIds, memberId])
+        else
+          g,
+    ],
   );
 }
 

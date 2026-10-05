@@ -195,6 +195,11 @@ class RecordingGraph implements az.GraphTransport {
   /// Deliberately not the member-ref deletes, which end in `/$ref`.
   final List<String> deletedGroups = <String>[];
 
+  /// Every single-member `POST /groups/<group>/members/$ref` this transport
+  /// accepted, as `<group id> <user id>` — the staff-group joins of #444, which
+  /// add one account at a time rather than riding a `$batch`.
+  final List<String> memberAdds = <String>[];
+
   /// When set, every `POST /groups` is refused with the
   /// `403 Authorization_RequestDenied` a tenant answers when the sign-in may
   /// not create Microsoft 365 groups — the shape #216 hit on a Graph write the
@@ -307,6 +312,17 @@ class RecordingGraph implements az.GraphTransport {
         statusCode: 200,
       );
     }
+    // A single-member join (#444): `POST /groups/<id>/members/$ref`, answered
+    // `204` like Graph does. Recorded with the directory object it added.
+    final join = _memberRefPath.firstMatch(request.url.path);
+    if (request.method == 'POST' && join != null) {
+      final body = Map<String, dynamic>.from(
+        jsonDecode(request.body ?? '{}') as Map,
+      );
+      final member = '${body['@odata.id']}'.split('/').last;
+      memberAdds.add('${join.group(1)} $member');
+      return const az.GraphResponse(statusCode: 204);
+    }
     // A group delete (#271): `DELETE /groups/<id>`, as opposed to the
     // `/groups/<id>/members/<id>/$ref` a membership removal issues.
     if (request.method == 'DELETE') {
@@ -318,6 +334,10 @@ class RecordingGraph implements az.GraphTransport {
 
   /// `/v1.0/groups/<id>` — the group resource itself, not a sub-collection.
   static final RegExp _groupPath = RegExp(r'/groups/([^/]+)$');
+
+  /// `/v1.0/groups/<id>/members/$ref` — one member added to one group.
+  static final RegExp _memberRefPath =
+      RegExp(r'/groups/([^/]+)/members/\$ref$');
 
   /// `/v1.0/users/<id-or-upn>` — a read of one user, as opposed to the
   /// collection reads `/v1.0/users` and `/v1.0/users/delta`.
@@ -2938,6 +2958,180 @@ ReconcileHarness azureClassGroupHarness({
       ourSchoolIds: const {1},
     );
 
+/// A harness for the Acties tab badges (#445). In each family it has one
+/// account with applyable work, and beside it accounts whose **only** pending
+/// item is an informational diagnosis. A badge that counts the diagnoses reads
+/// too high.
+///
+/// Students: our school 1, shaped like [azureClassGroupHarness]. Joe and Jim sit
+/// in the sub-grouped class `2F`, whose Office 365 group `GBS-2F` holds neither
+/// of them, so each carries only the `AzureClassGroupMembership` diagnosis of
+/// #245. The class itself carries the roster write, which is class work on
+/// Klasgroepen. Jane, in `1A`, has a blank Office 365 display name, so
+/// `ModifyAzureName` gives her applyable work.
+///
+/// Staff: Anna is in step in all three systems but missing from
+/// `GBS-Personeel`, which Exchange Online masters, so she carries only the
+/// `AzureStaffGroupNotManageable` diagnosis of #444. Piet is a new hire who is
+/// in WISA alone, so his import decision is applyable work.
+///
+/// [store] / [linkedStore] are forwarded so a passive session can be resumed
+/// over the view this one materializes.
+ReconcileHarness informationalOnlyHarness({
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      store: store,
+      linkedStore: linkedStore,
+      wisa: wisaSnap(
+        students: [
+          wisaStudent(wisaId: '1', classGroup: '1A'),
+          wisaStudent(
+            wisaId: '2',
+            classGroup: '2F',
+            classSubGroup: 'ECO',
+            firstName: 'Joe',
+            name: 'Janssens',
+          ),
+          wisaStudent(
+            wisaId: '3',
+            classGroup: '2F',
+            classSubGroup: 'MAW',
+            firstName: 'Jim',
+            name: 'Jacobs',
+          ),
+        ],
+        staff: [
+          wisaStaff(),
+          wisaStaff(
+              code: 'PEET',
+              wisaId: '43',
+              firstName: 'Piet',
+              lastName: 'Peeters'),
+        ],
+        schools: [wisaSchool(1)],
+        classGroups: [
+          wisaClassGroup('1A', description: 'Eerste jaar A'),
+          wisaClassGroup('2F',
+              groupName: 'ECO', adminCode: 'a', description: 'Tweede jaar F'),
+          wisaClassGroup('2F',
+              groupName: 'MAW', adminCode: 'b', description: 'Tweede jaar F'),
+        ],
+      ),
+      smartschool: ssSnap(
+        groups: [
+          ssGroup('1A',
+              description: 'Eerste jaar A',
+              instituteNumber: '123',
+              untis: '1A'),
+          ssGroup('2F ECO',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F ECO'),
+          ssGroup('2F MAW',
+              description: 'Tweede jaar F',
+              instituteNumber: '123',
+              untis: '2F MAW'),
+        ],
+        accounts: [
+          ssAccount(
+              uid: 'jane', accountId: '1', mail: 'a1@student.school.example'),
+          ssAccount(
+            uid: 'joe',
+            accountId: '2',
+            mail: 'a2@student.school.example',
+            givenName: 'Joe',
+            surname: 'Janssens',
+          ),
+          ssAccount(
+            uid: 'jim',
+            accountId: '3',
+            mail: 'a3@student.school.example',
+            givenName: 'Jim',
+            surname: 'Jacobs',
+          ),
+          ssStaffAccount(),
+        ],
+        memberships: [
+          member('jane', '1A'),
+          member('joe', '2F ECO'),
+          member('jim', '2F MAW'),
+        ],
+      ),
+      azure: azSnap(
+        users: [
+          // Jane's display name is left blank, which is her applyable work.
+          azUser(
+              id: 'az1',
+              upn: 'a1@student.school.example',
+              employeeId: '1',
+              department: '1A'),
+          azUser(
+              id: 'az2',
+              upn: 'a2@student.school.example',
+              employeeId: '2',
+              displayName: 'Joe Janssens',
+              department: '2F'),
+          azUser(
+              id: 'az3',
+              upn: 'a3@student.school.example',
+              employeeId: '3',
+              displayName: 'Jim Jacobs',
+              department: '2F'),
+          azStaffUser(),
+        ],
+        groups: [
+          azClassGroup('1A', memberIds: const ['az1']),
+          // Joe and Jim are missing from it.
+          azClassGroup('2F'),
+          azStaffGroup(exchangeManaged: true),
+        ],
+      ),
+      ourSchoolIds: const {1},
+    );
+
+/// A harness for the passive Acties tab badges (#446): one account in each
+/// family, each owing **two** applyable decisions. The stored rollups count
+/// decisions, so they hold 2 per family where the "met acties" list holds one
+/// row. A badge that quotes them reads double.
+///
+/// The student is [twoAzureWritesHarness]'s Jane: her Office 365 display name is
+/// blank (`ModifyAzureName`) and her `companyName` names another school
+/// (`ModifyAzureSchool`).
+///
+/// The staff member is Anna, in step in all three systems except twice over:
+/// Smartschool holds no copy code for her (`SetStaffCopyCode`), and she is
+/// missing from our manageable `GBS-Personeel` group
+/// (`AddStaffToAzureStaffGroup`, #444).
+///
+/// [store] / [linkedStore] are forwarded so a passive session can be resumed
+/// over the view this one materializes.
+ReconcileHarness twoDecisionAccountsHarness({
+  SnapshotStore? store,
+  InMemoryLinkedStore? linkedStore,
+}) =>
+    ReconcileHarness(
+      store: store,
+      linkedStore: linkedStore,
+      wisa: wisaSnap(
+        students: [wisaStudent(wisaId: '1', classGroup: '3C')],
+        staff: [wisaStaff()],
+        schools: [wisaSchool(1)],
+        classGroups: [wisaClassGroup('3C', adminCode: 'a3')],
+      ),
+      smartschool: ssSnap(
+        groups: [ssGroup('3C', code: '3C_ss', untis: '3C')],
+        accounts: [ssAccount(), ssStaffAccount(fax: '')],
+        memberships: [member('jane', '3C_ss')],
+      ),
+      azure: azSnap(
+        users: [azUser(companyName: 'SBE'), azStaffUser()],
+        groups: [azStaffGroup()],
+      ),
+      ourSchoolIds: const {1},
+    );
+
 /// A harness for the class group Graph will not manage the membership of
 /// (#331) — the reported bug, in the smallest shape that reproduces it.
 ///
@@ -4148,6 +4342,50 @@ az.AzureGroup azNonClassGroup(String displayName) => az.AzureGroup(
       mail: '${displayName.replaceAll(' ', '')}@student.school.example',
       mailNickname: displayName,
     );
+
+/// Our school's Office 365 staff group, `GBS-Personeel` (#444) — the Microsoft
+/// 365 group behind the staff Team by default, whose membership Graph manages.
+///
+/// The tenant can hold two groups of this one name, as legacy's
+/// `AddToStaffGroup` assumed: pass [securityGroup] for the plain security
+/// group, or [exchangeManaged] for a **mail-enabled** security group (#331),
+/// whose membership only Exchange Online can change.
+az.AzureGroup azStaffGroup({
+  String? id,
+  List<String> memberIds = const [],
+  bool securityGroup = false,
+  bool exchangeManaged = false,
+}) {
+  if (exchangeManaged) {
+    return az.AzureGroup(
+      id: id ?? 'az-GBS-Personeel-mesg',
+      displayName: 'GBS-Personeel',
+      mail: 'personeel@school.example',
+      mailNickname: 'personeel',
+      mailEnabled: true,
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+  }
+  if (securityGroup) {
+    return az.AzureGroup(
+      id: id ?? 'az-GBS-Personeel-sec',
+      displayName: 'GBS-Personeel',
+      mailNickname: 'GBS-Personeel-sec',
+      securityEnabled: true,
+      memberIds: memberIds,
+    );
+  }
+  return az.AzureGroup(
+    id: id ?? 'az-GBS-Personeel',
+    displayName: 'GBS-Personeel',
+    mail: 'GBS-Personeel@school.example',
+    mailNickname: 'GBS-Personeel',
+    mailEnabled: true,
+    groupTypes: const ['Unified'],
+    memberIds: memberIds,
+  );
+}
 
 /// Deterministic in-memory resolver (mirrors the linker's test fixture).
 class SeqResolver implements core.PersonIdResolver {

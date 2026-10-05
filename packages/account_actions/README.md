@@ -414,14 +414,70 @@ longer offers "werk het ledenbestand bij". Deliberately *every* and not *any*: a
 student missing from a group we manage while stuck in one we do not still has a
 write waiting on the class that can take it.
 
+## Office 365 staff group (#444)
+
+Every staff member of our school belongs in the Office 365 group
+`<PREFIX>-Personeel` — the tenant licenses staff through it, so an account
+outside it has no Office licence. Legacy placed new accounts there inside
+`AddToAzure` and repaired existing ones with `AddToStaffGroup`; the port had
+deferred both, because they read Office 365 group membership and a `LinkedStaff`
+carries none.
+
+The membership arrives as an injected `AzureStaffGroupPlacement`, through the
+opt-in `azureGroupPlacementFor` callback of `staffActions` / `staffActionsFor` —
+per record, like the student family's `azurePlacementFor`, because it *is* about
+the person. The State layer's `AzureStaffGroupResolver` builds it once per link
+from the **Azure snapshot** rather than the linked view: `GroupManager.listGroups`
+already reads every prefixed group with its member ids, but the group is not
+class-shaped, so the linker never makes it a `LinkedGroup` (#271) and the
+Klasgroepen lists rightly leave it out. Without the callback the dispatch is
+exactly as it was before #444.
+
+- **The name is built, never hard-coded:** `azureStaffGroupName(prefix)` →
+  `<PREFIX>-Personeel`, from the school prefix in Instellingen. A blank prefix
+  names no group and raises nothing. The display name is matched whole (case and
+  whitespace aside), so `SSM-Personeel-Extra` is never taken for it.
+- **Every group of that name.** The tenant may hold a security group *and* the
+  Microsoft 365 group behind the staff Team, and legacy joined both. Membership is
+  enforced in each one whose membership Graph manages; one that Exchange Online
+  masters (#331) is diagnosed but never written.
+- **`AddStaffToAzure`** joins the new account to those groups right after the
+  create. Best-effort (INV-41), like the Smartschool seat of #374: a missing
+  group, an Exchange-mastered one, and a refused or failed write each become an
+  `ActionResult.warnings` line and the account is still created. Unlike that
+  seat, a miss here has a safety net — the next link raises the repair below.
+- **`AddStaffToAzureStaffGroup`** (modify branch) is legacy `AddToStaffGroup`:
+  it fires for a staff member WISA places in a school we manage
+  (`LinkedStaff.isInOurWisa`, never Azure `department`, #237) whose account is
+  missing from a manageable group of that name, and writes one membership per
+  such group. It is **bulk-applyable**, as legacy's was. A partial failure
+  reports the joins that landed as applied and warns about the rest, so the
+  relink re-raises it for exactly the groups still missing.
+- **`AzureStaffGroupNotManageable`** is its informational counterpart for a
+  group Exchange Online masters: it names the group and its kind and sends the
+  operator to Exchange Online. The two partition the missing groups, so a
+  membership is either written or stated, never both.
+- **No group at all raises nothing** — that is a property of the tenant, not of
+  each teacher. `LinkedState.missingAzureStaffGroup` carries the name, and the
+  app logs it once per sync.
+
+Each join that lands names its group in `ActionResult.joinedAzureGroupIds`, and
+the State layer adds the member to that group **as the snapshot holds it now** —
+ids rather than group records, so a bulk pass's joins accumulate instead of each
+one overwriting the last. No re-pull is needed for the action to disappear.
+
+Removing someone who left from the group is **not** done (legacy did not either).
+
 ## Deferred (documented divergences)
 
-- **`AddToAzureStaffGroup`** / **`AddToStaffGroup`** and the `-Personeel` group
-  placement inside `AddStaffToAzure` are **not** ported: they evaluate against
-  Office 365 group membership, which `LinkedStaff` does not carry. Same
-  membership-aware follow-up.
+- **The role groups of legacy `AddToAzureStaffGroup`** (`<PREFIX>-Directie`,
+  `<PREFIX>-Secretariaat`, chosen by Smartschool role, plus their security-group
+  twins) are **not** ported, and neither is removing a departed staff member from
+  `<PREFIX>-Personeel`. The `-Personeel` membership itself — legacy
+  `AddToStaffGroup` and the seat inside `AddToAzure` — is ported since #444; see
+  [Office 365 staff group](#office-365-staff-group-444).
 
-  The Smartschool half of that sentence used to be here too, and it was wrong
+  The Smartschool half of this entry used to be here too, and it was wrong
   (#374). `AddStaffToSmartschool`'s `Leerkrachten` / `Leerlingen` writes evaluate
   against nothing at all — they are unconditional post-create plumbing, add to
   one fixed-name group and remove from another — so they were dropped by
@@ -429,9 +485,10 @@ write waiting on the class that can take it.
   [Staff group seat](#staff-group-seat-374). That fix is forward-only, and #378
   decided what to do about the accounts mis-seated before it: **a one-off tool**,
   [`packages/smartschool_api/tool/staff_seat_repair.dart`](../smartschool_api/tool/staff_seat_repair.dart),
-  not a standing action. A standing action would have to carry Smartschool group
-  membership on `LinkedStaff` — the same follow-up above — to keep proposing a
-  repair that, after #374, nothing can produce any more. The audit half of that
+  not a standing action. A standing action would need a membership-aware input
+  for Smartschool groups — the kind #444 later built for the Office 365 staff
+  group — to keep proposing a repair that, after #374, nothing can produce any
+  more. The audit half of that
   tool counted **0** mis-seated accounts on this school's tenant, which is the
   other reason: this create is not bulk-applyable (#293), so it appears never to
   have run in anger before the fix landed.

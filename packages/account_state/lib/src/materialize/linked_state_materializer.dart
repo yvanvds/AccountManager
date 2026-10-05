@@ -53,8 +53,9 @@ MaterializedView materialize(
   }
   final byStaff = <String, List<CandidateAction>>{};
   for (final a in linked.staffActions) {
-    // Read off the action like the other two families since #240: every staff
-    // action is applyable today, but nothing here should assume it.
+    // Read off the action like the other two families since #240 — and since
+    // #444 it matters here too: `AzureStaffGroupNotManageable` is informational,
+    // so it must not count as pending work or offer an apply that would throw.
     (byStaff[a.target.id.value] ??= <CandidateAction>[]).add(_candidate(
       'staff',
       a,

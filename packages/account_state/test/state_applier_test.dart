@@ -1358,6 +1358,147 @@ void main() {
     });
   });
 
+  group('the Office 365 staff group is joined and patched in (#444)', () {
+    /// The staff Team, `SSM-Personeel`, with the given members.
+    az.AzureGroup team({List<String> members = const []}) => az.AzureGroup(
+          id: 'az-personeel',
+          displayName: 'SSM-Personeel',
+          mailEnabled: true,
+          groupTypes: const ['Unified'],
+          memberIds: members,
+        );
+
+    /// A second colleague, in sync like Anna, so the bulk case has two joins
+    /// computed off one link.
+    final pietWisa = _wStaff(code: 'PEET', wisaId: '43');
+    final pietSs = _ssStaff().copyWith(
+      uid: 'piet.peeters',
+      accountId: 'PEET',
+      mail: 'piet.peeters@school.example',
+      fax: '0043',
+    );
+    final pietAz = _azStaff().copyWith(
+      id: 'az-s2',
+      upn: 'piet.peeters@school.example',
+      employeeId: '43',
+    );
+
+    List<String> memberAdds(_Harness h) => <String>[
+          for (final r in h.graph.requests)
+            if (r.method == 'POST' && r.url.path.contains('/members/'))
+              r.url.path,
+        ];
+
+    test('a join is spliced into the group, and the action converges',
+        () async {
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff()]),
+        smartschool: _sSnap(accounts: [_ssStaff()]),
+        azure: _aSnap(users: [_azStaff()], groups: [team()]),
+      );
+      final join = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzureStaffGroup>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(join);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(memberAdds(harness), hasLength(1));
+      expect(harness.app.azure.snapshot!.groups.single.memberIds, ['az-s1']);
+      expect(harness.app.azure.snapshot!.users.single.id, 'az-s1',
+          reason: 'the account itself is untouched by a membership write');
+      expect(
+        applied.linked!.staffActions.whereType<AddStaffToAzureStaffGroup>(),
+        isEmpty,
+        reason: 'the relink reads the membership that just landed',
+      );
+      expect(harness.counts, [0, 0, 0],
+          reason: 'the join rides the incremental refresh — no re-pull');
+    });
+
+    test('a bulk pass off one link keeps every join, not just the last',
+        () async {
+      // Both actions are derived from the same snapshot, so each carries the
+      // group as it stood *before* either write. Splicing the action's own copy
+      // of the group would let the second join overwrite the first.
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff(), pietWisa]),
+        smartschool: _sSnap(accounts: [_ssStaff(), pietSs]),
+        azure: _aSnap(users: [_azStaff(), pietAz], groups: [team()]),
+      );
+      final joins = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzureStaffGroup>()
+          .toList();
+      expect(joins, hasLength(2));
+
+      for (final join in joins) {
+        await harness.applier.applyStaff(join);
+      }
+
+      expect(
+        harness.app.azure.snapshot!.groups.single.memberIds,
+        unorderedEquals(<String>['az-s1', 'az-s2']),
+      );
+      expect(
+        (await harness.applier.link())
+            .staffActions
+            .whereType<AddStaffToAzureStaffGroup>(),
+        isEmpty,
+      );
+    });
+
+    test(
+        'a new hire is created into the group, and nothing is re-proposed once '
+        'the chain completes', () async {
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff()]),
+        wisaBaseStaff: [_wStaff()],
+        azure: _aSnap(groups: [team()]),
+      );
+      final create = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzure>()
+          .single;
+
+      final applied = await harness.applier.applyStaff(create);
+
+      expect(applied.result.outcome, ActionOutcome.applied);
+      expect(applied.result.warnings, isEmpty);
+      final created = harness.app.azure.snapshot!.users.single.id;
+      expect(applied.result.joinedAzureGroupIds, ['az-personeel']);
+      expect(harness.app.azure.snapshot!.groups.single.memberIds, [created]);
+      // The #240 chain still ran, so the record is complete — and complete
+      // without a staff-group repair waiting on it.
+      expect(applied.followUps.single.outcome, ActionOutcome.applied);
+      expect(applied.linked!.snapshot.staff.single.smartschool, isNotNull);
+      expect(
+        applied.linked!.staffActions.whereType<AddStaffToAzureStaffGroup>(),
+        isEmpty,
+      );
+    });
+
+    test('a dry run joins nothing and patches nothing', () async {
+      final harness = _Harness(
+        wisa: _wSnap(staff: [_wStaff()]),
+        smartschool: _sSnap(accounts: [_ssStaff()]),
+        azure: _aSnap(users: [_azStaff()], groups: [team()]),
+      );
+      final join = (await harness.applier.link())
+          .staffActions
+          .whereType<AddStaffToAzureStaffGroup>()
+          .single;
+
+      final applied =
+          await harness.applier.applyStaff(join, options: ApplyOptions.dry);
+
+      expect(applied.refreshed, isFalse);
+      expect(memberAdds(harness), isEmpty);
+      expect(harness.app.azure.snapshot!.groups.single.memberIds, isEmpty);
+    });
+  });
+
   group('Smartschool uid uniqueness for created accounts (#72)', () {
     test(
         'suffixes a colliding login and stays unique across sequential creates',
