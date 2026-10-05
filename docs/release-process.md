@@ -44,15 +44,33 @@ The **tag does not set the version, it claims one.** The workflow parses
 a tag pushed against an un-bumped `pubspec.yaml` stops there instead of shipping
 an installer that lies to the update check.
 
-The `+N` build number after the version (`1.0.0+1`) is not part of a release
-identity. Nothing compares on it.
+### There is no build number
+
+`version:` is a bare `X.Y.Z`, with no `+N` after it (#440). Up to v1.4.0 it
+carried one (`1.4.0+6`), bumped by hand on every release and read by nothing:
+`readInstalledVersion` returns the semantic version alone, the installer is
+compiled from it, and the tag check compares on it. A hand-maintained field with
+no consumer and no check is the one that drifts, so it was dropped rather than
+automated.
+
+What that leaves in the executable: the Flutter tool writes `0` into the fourth
+field of the Windows version resource, so a `1.4.0` build of
+`account_manager.exe` reports `1.4.0.0` as its numeric file and product version
+and `1.4.0` as its version strings. Two builds of the same version cannot be told apart by the executable —
+that is what bumping the version is for, and why a published version number is
+never re-used (see *Rolling back*).
+
+Do not add one back. `account_manager/test/update/pubspec_version_test.dart`
+fails on a `+N`, and the `app updates` end-to-end test checks that the running
+build reports exactly the value `pubspec.yaml` declares, with nothing cut off it.
+`flutter build windows` and `flutter run` need no extra arguments.
 
 ## Tagging
 
 1. On a normal PR into `develop`, together in one commit:
-   - bump `version:` in `account_manager/pubspec.yaml` — semver: patch for
-     fixes, minor for features, major for anything an operator has to be told
-     about;
+   - bump `version:` in `account_manager/pubspec.yaml` — a bare `X.Y.Z`, with
+     [no build number](#there-is-no-build-number); semver: patch for fixes,
+     minor for features, major for anything an operator has to be told about;
    - write `docs/release-notes/v<the new version>.md` — see
      [the release notes are read by operators](#the-release-notes-are-read-by-operators-in-the-app-395).
      Without it the tag will refuse to build.
