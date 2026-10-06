@@ -17,6 +17,11 @@
   Each connector's test self-skips when its trigger var is absent, so a
   missing .env file just skips that connector rather than failing.
 
+  The smartschool target also runs the app's bundled-roots TLS anchor check
+  (#454, account_manager/test/tls/bundled_roots_live_test.dart) under
+  `flutter test`: one handshake with the configured host against the embedded
+  GlobalSign roots alone, SMARTSCHOOL_SITE only, nothing sent. Read-only.
+
   Cosmos works the same way as Azure: the bearer token is minted fresh for the
   Cosmos resource (https://cosmos.azure.com) rather than stored, and the
   endpoint/database names come from .cosmos.env. That check is write-capable
@@ -119,7 +124,30 @@ try {
   Write-Host ""
   Write-Host "dart test $dirList"
   dart test @dirs
+  $status = $LASTEXITCODE
+
+  if ($Only -in @('all', 'smartschool')) {
+    # The app's own TLS anchor check (#454): one handshake with the configured
+    # Smartschool host against the *embedded* GlobalSign roots alone -- what a
+    # freshly installed PC, whose Windows store has never fetched them, has to
+    # work with. It lives in the Flutter app, so it runs under `flutter test`
+    # rather than `dart test`; it reads SMARTSCHOOL_SITE only (no access code)
+    # and sends nothing after the handshake. Red means Smartschool's chain no
+    # longer anchors in the bundle and the bundle needs refreshing -- see
+    # docs/release-process.md, "Bundled TLS roots".
+    Write-Host ""
+    Write-Host "flutter test test/tls/bundled_roots_live_test.dart  (account_manager/)"
+    Push-Location (Join-Path $repoRoot 'account_manager')
+    try {
+      flutter test test/tls/bundled_roots_live_test.dart
+      if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }
+    }
+    finally {
+      Pop-Location
+    }
+  }
 }
 finally {
   Pop-Location
 }
+exit $status

@@ -33,6 +33,7 @@ import 'src/reconcile/reconcile_bootstrap.dart';
 import 'src/settings/connection_config.dart';
 import 'src/settings/local_preferences.dart';
 import 'src/settings/settings_bootstrap.dart';
+import 'src/tls/bundled_roots.dart';
 import 'src/update/update_bootstrap.dart';
 
 void main() => launchAccountManager();
@@ -67,6 +68,14 @@ Future<void> launchAccountManager({
   OperatorCredentialStore? credentials,
   JournalStore? journal,
 }) async {
+  // The GlobalSign roots Smartschool chains to, added to the one trust store
+  // every HTTP client in this process verifies against (#454). First of all,
+  // before anything can build a client: `package:http`'s IOClient and Dio's
+  // adapter alike construct their HttpClient on `SecurityContext.defaultContext`,
+  // and a freshly installed Windows PC's store does not hold these roots until
+  // Edge has fetched them. Validation stays strict; only the anchors grow.
+  trustBundledRoots(SecurityContext.defaultContext);
+
   // Resolving the bootstrap is an async file read, and the values it carries
   // decide what `runApp` is handed, so the binding has to exist before the
   // await.

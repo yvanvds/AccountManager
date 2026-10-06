@@ -58,5 +58,10 @@ likewise manual/opt-in only.
 
 - The script sets credentials into the current process environment; they
   persist for the rest of the shell session. Open a fresh shell to clear them.
+- The `smartschool` target also runs the app's TLS anchor check (#454),
+  `account_manager/test/tls/bundled_roots_live_test.dart`, under `flutter test`:
+  one handshake with the configured host against the embedded GlobalSign roots
+  alone — no credential, nothing sent. Red means Smartschool's chain has moved
+  off the bundle; refresh it (docs/release-process.md, "Bundled TLS roots").
 - CI runs these same tests but authenticates Azure via OIDC federation (no
   stored secret) — see [.github/workflows/dart.yml](../../../.github/workflows/dart.yml).
