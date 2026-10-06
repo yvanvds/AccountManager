@@ -34,6 +34,13 @@
 ///   student's record. The refusal sounds a low, long square wave
 ///   ([RefusalBeep]) chosen to be unmistakable next to the scanner's own chirp,
 ///   which the operator hears all morning.
+///   The way out of a *wrong* scan — a borrowed card, a card scanned twice — is
+///   an explicit cancel (#457): **Annuleren** beside the student, or Escape,
+///   which a barcode scanner never sends. It drops the student with nothing
+///   journalled and nothing printed, and hands the keyboard back. A cancel is a
+///   deliberate act by the operator, which is exactly what the guard asks for
+///   instead of an implicit swap, so the refusal stays and names the cancel.
+///   It is unavailable once a confirmation is being written.
 /// - **The order of the confirmation is fixed.** `journal.register` flushes to
 ///   disk and only then is the ticket printed and the screen cleared. A student
 ///   holding a ticket is therefore always a student on disk; the reverse — a
@@ -135,7 +142,8 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   ScanResult? _held;
   DateTime? _heldAt;
 
-  /// Why the last scan was refused, or empty. Cleared by the next accepted scan.
+  /// Why the last scan was refused, or empty. Cleared by the next accepted scan,
+  /// and by a cancel.
   String _refusal = '';
 
   /// Why the last confirmation could not be written, or empty.
@@ -439,6 +447,12 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       _submit();
       return KeyEventResult.handled;
     }
+    // The operator's key, never the scanner's: no wedge sends Escape, so a scan
+    // burst cannot cancel the student it is refused behind. With nothing to
+    // cancel it is left for whoever else wants it.
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      return _cancel() ? KeyEventResult.handled : KeyEventResult.ignored;
+    }
     final String? character = event.character;
     if (character == null || character.isEmpty) {
       return KeyEventResult.ignored;
@@ -489,7 +503,8 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       _beep.play();
       setState(() => _refusal =
           'Deze scan is geweigerd: er staat nog een leerling te wachten op een '
-              'reden. Kies eerst een reden voor de leerling hieronder en laat de '
+              'reden. Kies eerst een reden voor de leerling hieronder, of druk '
+              'op Annuleren als dit de verkeerde leerling is, en laat de '
               'volgende leerling daarna opnieuw scannen.');
       return;
     }
@@ -500,6 +515,29 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
       _refusal = '';
       _registerError = '';
     });
+  }
+
+  /// Lets go of the student on screen without registering them (#457), and
+  /// reports whether there was one to let go of.
+  ///
+  /// The way out of a wrong scan. Nothing is journalled and nothing is printed,
+  /// so nothing reaches the drain or the mirror either: the desk is simply back
+  /// where it was before the card went past the scanner.
+  ///
+  /// Only a [ScanRegisterable] needs it — an unknown or incomplete scan is
+  /// replaced by the next one anyway — and never while [_confirming]: by then
+  /// the journal line may already be on disk and the ticket about to print, and
+  /// a screen that let go of the student would no longer say so.
+  bool _cancel() {
+    if (_held is! ScanRegisterable || _confirming) return false;
+    setState(() {
+      _held = null;
+      _heldAt = null;
+      _refusal = '';
+      _registerError = '';
+    });
+    _reclaimFocus();
+    return true;
   }
 
   /// Registers the student on screen with [reason], prints the ticket and frees
@@ -717,16 +755,40 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
           ),
         ],
       final ScanRegisterable hit => <Widget>[
-          Text(
-            hit.student.displayName,
-            key: const ValueKey<String>('late-scan-name'),
-            style: text.displaySmall,
-          ),
-          const SizedBox(height: PlinkSpacing.s2),
-          Text(
-            hit.student.className,
-            key: const ValueKey<String>('late-scan-class'),
-            style: text.headlineSmall?.copyWith(color: colors.onSurfaceVariant),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      hit.student.displayName,
+                      key: const ValueKey<String>('late-scan-name'),
+                      style: text.displaySmall,
+                    ),
+                    const SizedBox(height: PlinkSpacing.s2),
+                    Text(
+                      hit.student.className,
+                      key: const ValueKey<String>('late-scan-class'),
+                      style: text.headlineSmall
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: PlinkSpacing.s4),
+              // The way out of a wrong scan (#457). Beside the student it lets
+              // go of, outlined so it never competes with the reason buttons,
+              // and — like everything under [build]'s [ExcludeFocus] — unable
+              // to take the keyboard from the scanner.
+              OutlinedButton.icon(
+                key: const ValueKey<String>('late-scan-cancel'),
+                onPressed: _confirming ? null : _cancel,
+                icon: const Icon(Icons.close),
+                label: const Text('Annuleren'),
+              ),
+            ],
           ),
           const SizedBox(height: PlinkSpacing.s3),
           Text(
