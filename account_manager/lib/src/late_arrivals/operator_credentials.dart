@@ -317,7 +317,9 @@ const String smartschoolHostSuffix = '.smartschool.be';
 ///
 /// Throws on failure, carrying the library's own message — a wrong password and
 /// a missing second factor say different things, and the operator standing at
-/// the desk needs to be told which.
+/// the desk needs to be told which. A Smartschool that could not be reached at
+/// all is a [ss.SmartschoolConnectionError], which is not a login failure and
+/// is worded as such by [describeSmartschoolSignInFailure] (#455).
 typedef SmartschoolSignInProbe = Future<void> Function(
   SmartschoolOperatorLogin login,
   String host,
@@ -345,4 +347,65 @@ Future<void> probeSmartschoolOperatorSignInLive(
     cacheDir: cacheDir,
   );
   await client.ensureAuthenticated();
+}
+
+/// What a failed **Aanmelding testen** tells the person at the desk (#455).
+///
+/// Two kinds of failure come out of the probe, and they call for different
+/// hands. A login Smartschool *refused* — a wrong password, a missing second
+/// factor, a code it did not accept — comes back in the library's own words,
+/// unchanged: those messages already tell the three apart, and the operator is
+/// the one to fix them. A [ss.SmartschoolConnectionError] is the other kind:
+/// Smartschool was never reached, so nothing was sent — not the username, not
+/// the password, not the MFA — and no amount of retyping them helps. Until the
+/// library told the two apart (`yvanvds/dartschool#21`) a certificate the PC
+/// did not trust (#454) arrived here as an *authentication* error, raw
+/// `toString()` and BoringSSL source path included, and sent the technician
+/// looking at the MFA secret.
+///
+/// The certificate case is singled out because its fix is on this computer,
+/// not on the network. Since #454 the app trusts the GlobalSign roots itself,
+/// so what is left when the handshake still fails is something on the network
+/// re-signing TLS (a firewall, a proxy, an antivirus) or a root missing from
+/// the Windows store; the open-it-once-in-Edge workaround is offered last, as
+/// the fallback it is.
+///
+/// The library's own sentence stays reachable on a second line — whoever is
+/// asked to fix it still needs to see what Dio said — but it is never the
+/// operator's first line.
+String describeSmartschoolSignInFailure(Object error, String host) {
+  if (error is! ss.SmartschoolConnectionError) return '$error';
+  final String operatorLine = _isCertificateFailure(error)
+      ? 'De beveiligde verbinding met $host wordt op deze computer niet '
+          'vertrouwd: de aanmeldpagina werd nooit bereikt, dus gebruikersnaam, '
+          'wachtwoord en MFA zijn niet verstuurd. Meestal onderschept iets op '
+          'het netwerk (een firewall, proxy of antivirus) de TLS-verbinding, '
+          'of ontbreekt een basiscertificaat in het Windows-certificaatarchief. '
+          'Helpt dat niet, open dan https://$host één keer in Edge en herstart '
+          'de app.'
+      : 'Smartschool op $host is niet bereikbaar: de aanmeldpagina werd nooit '
+          'bereikt, dus gebruikersnaam, wachtwoord en MFA zijn niet verstuurd. '
+          'Controleer de netwerkverbinding en het Smartschool-adres.';
+  return '$operatorLine\n$error';
+}
+
+/// Whether a connection failure is the TLS handshake being refused — a
+/// certificate this computer does not trust — rather than a host that does not
+/// answer.
+///
+/// The library's `cause` is the `DioException`, whose own `error` is the
+/// `HandshakeException`; this app does not depend on `dio` and has no business
+/// starting to for one field, so the chain is read as text. Dio prints its
+/// inner error (`Error: HandshakeException: …`), and the library's message
+/// already carries it too (`the connection failed (HandshakeException: …)`),
+/// so either is enough. A direct [TlsException] cause — which is what a test
+/// hands in — is matched by type.
+bool _isCertificateFailure(ss.SmartschoolConnectionError error) {
+  final Object? cause = error.cause;
+  if (cause is TlsException) return true;
+  final String text = '${error.message}\n$cause'.toLowerCase();
+  return text.contains('handshakeexception') ||
+      text.contains('certificate_verify_failed') ||
+      // `DioExceptionType.badCertificate`, as the library words it.
+      text.contains('certificate was rejected');
 }

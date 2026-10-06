@@ -201,6 +201,40 @@ Two things worth knowing when supporting this:
   unreachable, both at once. If it ever does not, that is the bug — the screen
   that fixes sign-in must never sit behind sign-in.
 
+## Bundled TLS roots (#454)
+
+Dart on Windows trusts what the Windows certificate stores hold when the process
+starts, and verifies chains itself — it never asks Windows to build a chain, so
+it never triggers the on-demand download that fills a fresh install's store.
+`*.smartschool.be` chains to **GlobalSign Root CA - R3**, which Windows ships
+without and fetches the first time *Edge* (not Chrome, not Firefox, not this
+app) visits a site that uses it. On a new PC where nobody had opened Smartschool
+in Edge, every Smartschool connection failed with `CERTIFICATE_VERIFY_FAILED`
+while Azure AD and Cosmos worked.
+
+So the app carries GlobalSign's public TLS roots itself — R3, R6, ECC R5, R46,
+E46 — in `account_manager/lib/src/tls/bundled_roots.dart`, and adds them to the
+default `SecurityContext` first thing in `launchAccountManager()`. Validation is
+unchanged; only the anchors grow. Nothing to install on the PC, nothing to
+configure.
+
+**When to refresh.** The unit test
+(`account_manager/test/tls/bundled_roots_test.dart`) goes red a year before any
+bundled root expires. The live check (`tool/live-tests.ps1 -Only smartschool`,
+which runs `test/tls/bundled_roots_live_test.dart`) goes red the day
+Smartschool's chain stops anchoring in the bundle — run it when a Smartschool
+connection fails on a fresh PC again, or when Smartschool announces a
+certificate change.
+
+**How to refresh.** Take the root's PEM block from the Mozilla bundle
+(<https://curl.se/ca/cacert.pem>), add it to `bundled_roots.dart` with its name,
+SHA-256 and `notAfter`, and confirm the SHA-256 against a second, independent
+source before committing: the Windows store on a machine that has it
+(`Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like '*GlobalSign*'`)
+or GlobalSign's repository (<https://secure.globalsign.com/cacert/>). The unit
+test then holds the documented fingerprint and expiry to what the PEM says. A
+root the Mozilla bundle has dropped comes out.
+
 ## What the app does
 
 On launch, **release builds only** (`autoCheck: kReleaseMode` in `main()` — a

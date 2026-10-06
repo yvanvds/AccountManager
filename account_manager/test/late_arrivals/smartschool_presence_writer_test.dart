@@ -98,18 +98,97 @@ void main() {
       );
     });
 
-    test('an HTML response reads as an expired session', () async {
-      // Exactly what `PresenceService._decode` raises when Smartschool serves
-      // the login page instead of JSON.
+    test(
+        'a session Smartschool no longer accepts reads as an expired session '
+        '(dartschool#5)', () async {
+      // What the Presence module raises since 0.3.0 when a request is answered
+      // by the login chain — typed, where 0.2.10 had one HTML sentence for two
+      // causes that this adapter had to read.
       final FakeSession session = FakeSession(
-        failure: const ss.SmartschoolPresenceError(
-          'Received HTML instead of JSON from /Presence/Main/getConfig. The '
-          'session may have expired, or the account lacks Presence access.',
-        ),
+        failure: const ss.SmartschoolSessionExpiredError(),
       );
       await expectLater(
         write(SmartschoolPresenceWriter(session)),
         throwsA(isA<PresenceSessionExpired>()),
+      );
+    });
+
+    test(
+        'an HTML page that is not the login chain is a rejection, not an '
+        'expiry', () async {
+      // The other half of dartschool#5: Smartschool's generic error page on a
+      // request the module could not handle, with the session accepted. The
+      // message no longer suggests expiry, and signing in again would not help.
+      final FakeSession session = FakeSession(
+        failure: const ss.SmartschoolPresenceError(
+          'The Presence module answered /Presence/Main/getConfig with an HTML '
+          'page (HTTP 500) instead of JSON: it could not handle the request '
+          '(the request is invalid, or the account may lack Presence access).',
+        ),
+      );
+      await expectLater(
+        write(SmartschoolPresenceWriter(session)),
+        throwsA(
+          isA<PresenceRejected>().having(
+            (PresenceRejected e) => e.message,
+            'message',
+            contains('HTTP 500'),
+          ),
+        ),
+      );
+    });
+
+    test(
+        'a Smartschool that cannot be reached is transient: returned unchanged, '
+        'no re-authentication spent on it (#455)', () async {
+      // What `ensureAuthenticated()` and every service call throw since
+      // dartschool#21 for a host that does not resolve, a dropped connection or
+      // a failed TLS handshake. On 0.2.10 this arrived as an authentication
+      // error and the drain burned its capped sign-ins on a network problem.
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError(
+        'Unable to reach Smartschool at arcadia.smartschool.be: the connection '
+        'failed (HandshakeException: Handshake error in client (OS Error: '
+        'CERTIFICATE_VERIFY_FAILED: unable to get local issuer '
+        'certificate(handshake.cc:393)))',
+      );
+      expect(classifyPresenceFailure(unreachable), same(unreachable));
+
+      final FakeSession session = FakeSession(failure: unreachable);
+      await expectLater(
+        write(SmartschoolPresenceWriter(session)),
+        throwsA(
+          allOf(
+            same(unreachable),
+            isNot(isA<PresenceSessionExpired>()),
+            isNot(isA<PresenceRejected>()),
+          ),
+        ),
+      );
+      expect(session.signIns, 0);
+    });
+
+    test('the typed preconditions the module checks are rejections too',
+        () async {
+      // 0.3.x subtypes of `SmartschoolPresenceError`, raised before anything
+      // is sent; a fresh login changes nothing about them.
+      final FakeSession session = FakeSession(
+        failure: const ss.SmartschoolPresencePupilNotFoundError(
+          'Pupil userID 11110 was not found in class groupID 298 on 2026-09-07.',
+          userId: 11110,
+          classGroupId: 298,
+          date: '2026-09-07',
+        ),
+      );
+      await expectLater(
+        write(SmartschoolPresenceWriter(session)),
+        throwsA(
+          isA<PresenceRejected>().having(
+            (PresenceRejected e) => e.message,
+            'message',
+            contains('was not found in class groupID 298'),
+          ),
+        ),
       );
     });
 

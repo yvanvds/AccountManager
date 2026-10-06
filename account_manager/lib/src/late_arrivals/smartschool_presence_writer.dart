@@ -105,10 +105,18 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
   Future<void> signIn() async {
     // The whole session goes, not just the cookies: `PresenceService` caches
     // the module config and the code list, and both were read under the login
-    // that has just been found wanting.
-    await _client?.clearCookies();
+    // that has just been found wanting. Disposing the old client closes its
+    // HTTP connections (0.3.x). The new one starts the library's own count of
+    // failed logins (three in a row, then a cooldown, dartschool#32) from
+    // zero, so it is the drain's capped re-authentication budget that bounds
+    // the retries, not the library's.
+    final ss.SmartschoolClient? previous = _client;
     _client = null;
     _presence = null;
+    if (previous != null) {
+      await previous.clearCookies();
+      await previous.dispose();
+    }
     final ss.SmartschoolClient client =
         await ss.SmartschoolClient.create(credentials, cacheDir: cacheDir);
     await client.ensureAuthenticated();
@@ -190,34 +198,49 @@ ss.DayPart dayPartOf(HalfDay part) => switch (part) {
 /// Three outcomes, and the drain does something different with each:
 ///
 /// - [PresenceSessionExpired] — sign in again and retry, no strike against the
-///   record.
+///   record. Every [ss.SmartschoolAuthenticationError], which includes the
+///   typed [ss.SmartschoolSessionExpiredError] the Presence module raises when
+///   Smartschool answers a request with its login chain (`yvanvds/dartschool#5`)
+///   — and also what the library raises, *without* logging in, once three
+///   logins in a row failed and its cooldown is running (`dartschool#32`). The
+///   drain's own re-authentication cap bounds how often this path is walked,
+///   and `LiveSmartschoolPresenceSession.signIn` replaces the client, which
+///   starts the library's count afresh.
 /// - [PresenceRejected] — terminal at once, keeping the server's own wording so
-///   the operator can tell an access right from a class registration.
-/// - anything else, returned unchanged — transient, retried with backoff.
+///   the operator can tell an access right from a class registration. Every
+///   other [ss.SmartschoolPresenceError]: a save the module refused
+///   (`errors[]`), and the typed preconditions it checks before sending
+///   anything — a pupil the class no longer lists, a class the account may not
+///   confirm for, an error page that is not the login chain. None of those is
+///   fixed by signing in again.
+/// - anything else, returned unchanged — transient, retried with backoff. The
+///   [ss.SmartschoolConnectionError] is the one that matters here (#455):
+///   Smartschool was never reached, so the session is not known to be bad and
+///   a fresh login would only hit the same network. On 0.2.10 the library
+///   wrapped it in an authentication error, and the drain spent its capped
+///   re-authentications on an unplugged cable before it fell through to the
+///   backoff it should have started with.
 ///
-/// The library conflates two causes in one message for an HTML response ("the
-/// session may have expired, **or** the account lacks Presence access"), and
-/// this reads that as expiry. That is the safe reading rather than the likely
-/// one: the drain caps re-authentication, so a genuine rights problem burns two
-/// sign-ins, then falls through the ordinary transient path and lands on the
-/// record as a visible failure carrying that exact sentence. Reading it the
-/// other way round would terminally fail a queue that a fresh login would have
-/// drained.
-///
-/// Matching on the message is fragile and known to be: `yvanvds/dartschool#5`
-/// asks for a type or a flag to tell the two causes apart. When that lands,
-/// [_readsAsExpiredSession] goes away.
+/// Until 0.3.0 the library reported an HTML answer in one sentence for two
+/// causes ("the session may have expired, **or** the account lacks Presence
+/// access") and this function read that sentence, choosing expiry as the safe
+/// reading. The typed error (`dartschool#5`) made the message match go away:
+/// the login chain is now a [ss.SmartschoolSessionExpiredError], and any other
+/// HTML page stays a [ss.SmartschoolPresenceError] whose message names the HTTP
+/// status instead.
 Object classifyPresenceFailure(Object error) {
   if (error is PresenceSessionExpired || error is PresenceRejected) {
+    return error;
+  }
+  if (error is ss.SmartschoolConnectionError) {
+    // Not an authentication failure, by the library's own design: nothing was
+    // sent, so there is nothing to sign in again for. Retry it.
     return error;
   }
   if (error is ss.SmartschoolAuthenticationError) {
     return PresenceSessionExpired(error.message);
   }
   if (error is ss.SmartschoolPresenceError) {
-    if (_readsAsExpiredSession(error.message)) {
-      return PresenceSessionExpired(error.message);
-    }
     // The server's `errors[]` when it rejected the save, the client-side
     // precondition message otherwise. Either way it is what the operator needs
     // to read, verbatim.
@@ -225,14 +248,6 @@ Object classifyPresenceFailure(Object error) {
       error.errors.isEmpty ? error.message : error.errors.join('; '),
     );
   }
-  // A dropped connection, a timeout, a 502. Retry it.
+  // A 502, a disposed client, anything the library did not name. Retry it.
   return error;
-}
-
-/// Whether a presence error is the library's "got HTML back" message, which is
-/// what an expired session looks like from inside the Presence module.
-bool _readsAsExpiredSession(String message) {
-  final String lower = message.toLowerCase();
-  return lower.contains('session may have expired') ||
-      lower.contains('html instead of json');
 }
