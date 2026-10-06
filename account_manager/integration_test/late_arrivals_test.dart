@@ -4,7 +4,8 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show Directory, File, FileSystemException, Platform;
+import 'dart:io'
+    show Directory, File, FileSystemException, HandshakeException, Platform;
 
 import 'package:account_manager/src/app.dart';
 import 'package:account_manager/src/auth/auth.dart';
@@ -42,6 +43,7 @@ import 'package:late_arrivals/late_arrivals.dart'
         defaultLateArrivalReasons;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -744,6 +746,123 @@ void main() {
       );
       await desk.drain!.settle();
       expect(written.userIds, <int>[4242]);
+
+      // Unmount before letting go of the desk, so the scope is not listening to a
+      // disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'Aanmelding testen tells a Smartschool it could not reach apart from a '
+        'login it refused: the operator reads which to fix, in Dutch, and the '
+        'library\'s own words stay on the line below (#455)',
+        (WidgetTester tester) async {
+      // The secretariat PC of #454: the TLS handshake with Smartschool failed
+      // (`CERTIFICATE_VERIFY_FAILED`), and the status line under **Aanmelding
+      // testen** showed the raw `toString()` of an *authentication* error,
+      // BoringSSL source path included. The technician went looking at the MFA
+      // secret and the password, neither of which had left the machine.
+      //
+      // The status line is what the person at the desk reads, so this is proven
+      // where they read it: the real settings screen inside the real shell,
+      // through the real desk. The probe is a fake, permanently — a Smartschool
+      // sign-in is a live interaction with the school's tenant, and the repo's
+      // live-testing policy keeps those out of CI entirely. It fails the way
+      // the library has failed since dartschool#21: a `SmartschoolConnectionError`
+      // whose cause is the handshake, deliberately not an authentication error.
+      useTallWindow(tester);
+
+      const String handshake =
+          'Handshake error in client (OS Error: CERTIFICATE_VERIFY_FAILED: '
+          'unable to get local issuer certificate(handshake.cc:393))';
+      final List<String> probedHosts = <String>[];
+
+      const AppSettings base = AppSettings();
+      final InMemorySettingsStore shared = InMemorySettingsStore(
+        base.copyWith(
+          smartschool: base.smartschool.copyWith(uri: 'arcadia'),
+        ),
+      );
+      final LiveSettings live = LiveSettings();
+
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: InMemoryJournalStore(),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'balie-455',
+        settings: live,
+        writerFor: (_, __) => _RecordingPresenceWriter(),
+        signInProbe: (SmartschoolOperatorLogin login, String host) async {
+          probedHosts.add(host);
+          throw ss.SmartschoolConnectionError(
+            'Unable to reach Smartschool at $host: the connection failed '
+            '(HandshakeException: $handshake)',
+            cause: const HandshakeException(handshake),
+          );
+        },
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        settingsBootstrap: () async => SettingsServices(
+          store: shared,
+          secrets: InMemorySecretProvider(const {}),
+          liveSettings: live,
+        ),
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
+
+      final Finder testButton =
+          find.byKey(const ValueKey('settings-smartschool-operator-test'));
+      await tester.ensureVisible(testButton);
+      await tester.pumpAndSettle();
+      await tester.tap(testButton);
+      await tester.pumpAndSettle();
+
+      expect(probedHosts, <String>['arcadia.smartschool.be']);
+      final Finder status =
+          find.byKey(const ValueKey('settings-smartschool-operator-status'));
+      final Text line = tester.widget<Text>(status);
+      final List<String> lines = line.data!.split('\n');
+      // The operator's line: the host, that nothing was sent, what to look at
+      // — and not one byte of BoringSSL.
+      expect(
+        lines.first,
+        allOf(
+          contains('arcadia.smartschool.be'),
+          contains('niet vertrouwd'),
+          contains('gebruikersnaam, wachtwoord en MFA zijn niet verstuurd'),
+          contains('firewall, proxy of antivirus'),
+          isNot(contains('handshake.cc')),
+          isNot(contains('SmartschoolConnectionError')),
+          isNot(contains('authentic')),
+        ),
+      );
+      // The library's own sentence, for whoever is asked to fix it, below.
+      expect(
+        lines.skip(1).join('\n'),
+        allOf(
+          contains('SmartschoolConnectionError'),
+          contains('CERTIFICATE_VERIFY_FAILED'),
+        ),
+      );
+      // Reported as the failure it is, in the error colour.
+      expect(
+        line.style?.color,
+        Theme.of(tester.element(status)).colorScheme.error,
+      );
 
       // Unmount before letting go of the desk, so the scope is not listening to a
       // disposed notifier.

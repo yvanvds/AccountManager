@@ -1,7 +1,10 @@
+import 'dart:io' show HandshakeException;
+
 import 'package:account_manager/src/late_arrivals/late_arrival_desk.dart';
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_state/account_state.dart'
     show AppSettings, LiveSettings;
+import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 
@@ -432,6 +435,119 @@ void main() {
         await desk.testSignIn(login),
         contains('Foutieve gebruikersnaam of wachtwoord.'),
       );
+      desk.dispose();
+    });
+
+    test(
+        'a wrong password still shows the library\'s own authentication '
+        'message, unchanged (#455)', () async {
+      // The diagnostic the button exists for. The connection wording below
+      // must not swallow it.
+      const ss.SmartschoolInvalidCredentialsError refused =
+          ss.SmartschoolInvalidCredentialsError();
+      final desk = deskWith(
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        signInProbe: (_, __) async => throw refused,
+      );
+      await desk.start();
+      expect(await desk.testSignIn(login), '$refused');
+      desk.dispose();
+    });
+
+    test(
+        'a Smartschool that cannot be reached is not a failed login: the host '
+        'is named, nothing was sent, and the library\'s words follow on a '
+        'second line (#455)', () async {
+      // What `ensureAuthenticated()` throws since dartschool#21 for a host that
+      // does not answer. On 0.2.10 it came out as an authentication error and
+      // the operator was sent to check a password that was never transmitted.
+      final desk = deskWith(
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        signInProbe: (_, String host) async =>
+            throw ss.SmartschoolConnectionError(
+          'Unable to reach Smartschool at $host: the connection timed out',
+          cause: StateError('DioException [connection timeout]: null'),
+        ),
+      );
+      await desk.start();
+      final String? result = await desk.testSignIn(login);
+      final List<String> lines = result!.split('\n');
+      expect(
+        lines.first,
+        allOf(
+          contains('arcadia.smartschool.be'),
+          contains('niet bereikbaar'),
+          contains('gebruikersnaam, wachtwoord en MFA zijn niet verstuurd'),
+          isNot(contains('niet vertrouwd')),
+          isNot(contains('SmartschoolConnectionError')),
+        ),
+      );
+      expect(
+        lines.skip(1).join('\n'),
+        contains('Unable to reach Smartschool at arcadia.smartschool.be'),
+      );
+      desk.dispose();
+    });
+
+    test(
+        'a TLS handshake this computer does not trust says so, and keeps the '
+        'BoringSSL path off the operator\'s line (#455)', () async {
+      // The secretariat PC of #454: `CERTIFICATE_VERIFY_FAILED`, which used to
+      // reach the status line as the raw `toString()` of an authentication
+      // error, BoringSSL source path and all.
+      const String handshake =
+          'Handshake error in client (OS Error: CERTIFICATE_VERIFY_FAILED: '
+          'unable to get local issuer certificate(handshake.cc:393))';
+      final desk = deskWith(
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        signInProbe: (_, String host) async =>
+            throw ss.SmartschoolConnectionError(
+          'Unable to reach Smartschool at $host: the connection failed '
+          '(HandshakeException: $handshake)',
+          cause: const HandshakeException(handshake),
+        ),
+      );
+      await desk.start();
+      final String? result = await desk.testSignIn(login);
+      final List<String> lines = result!.split('\n');
+      expect(
+        lines.first,
+        allOf(
+          contains('arcadia.smartschool.be'),
+          contains('niet vertrouwd'),
+          contains('gebruikersnaam, wachtwoord en MFA zijn niet verstuurd'),
+          contains('firewall, proxy of antivirus'),
+          contains('Edge'),
+          isNot(contains('handshake.cc')),
+          isNot(contains('CERTIFICATE_VERIFY_FAILED')),
+        ),
+      );
+      // Still reachable for whoever is asked to fix it — just not first.
+      expect(result, contains('CERTIFICATE_VERIFY_FAILED'));
+      desk.dispose();
+    });
+
+    test(
+        'the certificate case is recognised from the text of the cause chain '
+        'too, as Dio hands it over (#455)', () async {
+      // In production the library's `cause` is the `DioException`, whose own
+      // `error` is the `HandshakeException`; this app does not depend on
+      // `dio`, so it reads the chain as the text Dio prints.
+      final desk = deskWith(
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        signInProbe: (_, String host) async =>
+            throw ss.SmartschoolConnectionError(
+          'Unable to reach Smartschool at $host: the connection failed',
+          cause: StateError(
+            'DioException [unknown]: null\nError: HandshakeException: '
+            'Handshake error in client (OS Error: CERTIFICATE_VERIFY_FAILED: '
+            'unable to get local issuer certificate(handshake.cc:393))',
+          ),
+        ),
+      );
+      await desk.start();
+      final String? result = await desk.testSignIn(login);
+      expect(result!.split('\n').first, contains('niet vertrouwd'));
       desk.dispose();
     });
 

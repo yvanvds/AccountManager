@@ -336,7 +336,10 @@ class LateArrivalDesk extends ChangeNotifier {
   ///
   /// Returns `null` when the login worked, and the failure text otherwise —
   /// including for a build with no probe wired, which is a state to report
-  /// rather than an exception to throw.
+  /// rather than an exception to throw. A login Smartschool refused keeps the
+  /// library's own wording; a Smartschool that could not be reached is told
+  /// apart from it, in Dutch, naming the host (#455) — see
+  /// [describeSmartschoolSignInFailure].
   ///
   /// [host] defaults to the configured site; Instellingen passes the URI *as
   /// typed*, so an operator can check a corrected address before committing it.
@@ -360,7 +363,7 @@ class LateArrivalDesk extends ChangeNotifier {
       await probe(candidate, against);
       return null;
     } on Object catch (error) {
-      return '$error';
+      return describeSmartschoolSignInFailure(error, against);
     }
   }
 

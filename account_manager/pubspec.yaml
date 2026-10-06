@@ -51,13 +51,28 @@ dependencies:
   # the whole reason this is here — first appears in 0.2.9. Switch to a hosted
   # version once one carrying it is published.
   #
-  # 0.2.10 (dartschool#6): follows the 302 Smartschool answers a login POST
-  # with since September 2026; on 0.2.9 every operator sign-in died with
-  # "Login failed" before the 2FA step (#432).
+  # 0.3.5 (the `main` merge of that release): the first pin past the fix for
+  # dartschool#21, which is why it was taken (#455). Since that fix a request
+  # that cannot reach Smartschool at all — the host does not resolve, the
+  # connection drops or times out, the TLS handshake fails — throws
+  # `SmartschoolConnectionError` with the `DioException` as its `cause`,
+  # deliberately *not* a `SmartschoolAuthenticationError`. On 0.2.10 every one
+  # of those came out of `ensureAuthenticated()` as an authentication error, so
+  # a certificate the PC did not trust (#454) read as a wrong password under
+  # **Aanmelding testen**, and the drain spent its re-authentications on a
+  # network that was simply down. The 302-after-login fix the previous pin was
+  # taken for (dartschool#6, #432) is in every later commit, this one included.
+  #
+  # The same jump brings the typed errors the Te laat layer now matches on
+  # instead of on message text: `SmartschoolSessionExpiredError` (dartschool#5,
+  # which `smartschool_presence_writer.dart` used to approximate by reading the
+  # "HTML instead of JSON" sentence), the `SmartschoolPresenceError` subtypes,
+  # the login cooldown after three failed logins (dartschool#32) and
+  # `SmartschoolClient.dispose()`.
   flutter_smartschool:
     git:
       url: https://github.com/yvanvds/dartschool.git
-      ref: ca0b79813d815b49e4010c1d6727b515cb72c8fc
+      ref: 971d1bac66bb6e4751181ea27a58cb86050ed33c
 
   # For the interactive loopback fallback's injectable HTTP client (the token
   # endpoint), shared with the OAuthAuthProvider reused from azure_api.
