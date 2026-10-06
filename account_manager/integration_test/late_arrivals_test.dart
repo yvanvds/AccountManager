@@ -1085,6 +1085,172 @@ void main() {
     });
 
     testWidgets(
+        'a wrong scan is cancelled with Annuleren or Escape before a reason is '
+        'picked: nothing is journalled or printed for it, and the right student '
+        'scans straight after without a refusal (#457)',
+        (WidgetTester tester) async {
+      // The cancel, end to end, in the real app. A widget test proves the
+      // button clears the student; only the real shell can prove the *focus*
+      // half — that pressing a real button in the real page, inside a shell
+      // that keeps every destination mounted, leaves the keyboard with the
+      // hidden scanner input so the very next card lands. A cancel that took
+      // the keyboard would turn the next scan into one that vanishes without a
+      // trace, the worst failure this screen has. And "nothing reached the
+      // journal" is a claim about a real day file on a real filesystem.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-annuleren-');
+      addTearDown(() => deleteTempDir(dir));
+
+      final _CountingRefusalBeep beep = _CountingRefusalBeep();
+      final _RecordingTicketTransport tickets = _RecordingTicketTransport();
+
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(dir),
+        credentials: InMemoryOperatorCredentialStore(),
+        deskId: 'onthaal-annuleren',
+      );
+      addTearDown(desk.dispose);
+
+      // A desk with a printer, so a ticket for the wrong student would show.
+      final LocalPreferences preferences = LocalPreferences(
+        InMemoryLocalPreferenceStore(
+          <String, Object?>{'lateArrivalPrinterId': 'balie-printer'},
+        ),
+      );
+      await preferences.load();
+
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: LiveSettings(const AppSettings(
+          ticketPrinters: <TicketPrinter>[
+            TicketPrinter(
+              id: 'balie-printer',
+              label: 'Balie',
+              host: 'bonprinter-balie.invalid',
+            ),
+          ],
+        )),
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+        refusalBeep: beep,
+        ticketTransport: tickets,
+        preferences: preferences,
+      ));
+      await tester.pumpAndSettle();
+
+      /// Scans [code] the way the wedge does: the digits, then Enter.
+      Future<void> scan(String code) async {
+        for (final String character in code.split('')) {
+          await tester.sendKeyEvent(
+            _scannerKeys[character]!,
+            character: character,
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+      }
+
+      String textOf(String key) =>
+          tester.widget<Text>(find.byKey(ValueKey<String>(key))).data ?? '';
+
+      String indicatorText() =>
+          tester
+              .widget<Text>(find.descendant(
+                of: find
+                    .byKey(const ValueKey<String>('late-scanner-indicator')),
+                matching: find.byType(Text),
+              ))
+              .data ??
+          '';
+
+      final Finder cancel =
+          find.byKey(const ValueKey<String>('late-scan-cancel'));
+      final Finder idle = find.byKey(const ValueKey<String>('late-scan-idle'));
+
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      expect(indicatorText(), 'KLAAR OM TE SCANNEN');
+      expect(cancel, findsNothing, reason: 'nothing on screen to cancel');
+
+      // --- The wrong card, let go of with the button. --------------------------
+      await scan('123456');
+      expect(textOf('late-scan-name'), 'Jonas Peeters');
+      expect(cancel, findsOneWidget);
+
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(idle, findsOneWidget);
+      expect(
+          find.byKey(const ValueKey<String>('late-scan-name')), findsNothing);
+      expect(
+        indicatorText(),
+        'KLAAR OM TE SCANNEN',
+        reason: 'the button must not keep the keyboard from the scanner',
+      );
+
+      // --- The right card lands at once — no click, no refusal. ----------------
+      await scan('223344');
+      expect(textOf('late-scan-name'), 'Lea Janssens');
+      expect(find.byKey(const ValueKey<String>('late-refusal')), findsNothing);
+
+      // --- Escape does the same, without reaching for the mouse. ---------------
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(idle, findsOneWidget);
+      expect(indicatorText(), 'KLAAR OM TE SCANNEN');
+
+      // --- The right student, registered. --------------------------------------
+      await scan('223344');
+      expect(textOf('late-scan-name'), 'Lea Janssens');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      // Never `pumpAndSettle` alone for the journal's real file I/O (#425, #453).
+      await pumpUntil(
+        tester,
+        'the registration to be flushed to the journal',
+        () => desk.journal!.records.isNotEmpty,
+      );
+      await pumpUntil(
+        tester,
+        'the ticket to reach its printer',
+        () => tickets.sent.isNotEmpty,
+      );
+
+      // Only the right student is on record — in memory and in the day file.
+      expect(
+        desk.journal!.records.map((LateArrivalRecord r) => r.displayName),
+        <String>['Lea Janssens'],
+      );
+      final List<File> dayFiles =
+          dir.listSync().whereType<File>().toList(growable: false);
+      expect(dayFiles, hasLength(1));
+      final String onDisk = dayFiles.single.readAsStringSync();
+      expect(onDisk, contains('Lea Janssens'));
+      expect(onDisk, isNot(contains('Jonas Peeters')));
+
+      // Exactly one ticket, and it is hers.
+      expect(tickets.sent, hasLength(1));
+      expect(
+        String.fromCharCodes(tickets.sent.single),
+        contains('Lea Janssens'),
+      );
+      // And the desk never told anybody off along the way.
+      expect(beep.played, 0);
+      expect(idle, findsOneWidget);
+
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'the desk picks its ticket printer off the shared list, prints on the '
         'one it picked, and is still pointed at it after a restart (#436)',
         (WidgetTester tester) async {

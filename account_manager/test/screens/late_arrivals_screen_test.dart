@@ -107,9 +107,15 @@ Future<void> _scan(WidgetTester tester, String code) async {
 ///
 /// Registrations are real — appended, ordered, folded back on read — they simply
 /// do not outlive the test, which is exactly what a headless run should get.
-Future<LateArrivalDesk> _openDesk(WidgetTester tester) async {
+///
+/// [store] replaces the in-memory journal store — the gated one below, for a
+/// test that has to look at the screen while a registration is being written.
+Future<LateArrivalDesk> _openDesk(
+  WidgetTester tester, {
+  JournalStore? store,
+}) async {
   final LateArrivalDesk desk = LateArrivalDesk(
-    journalStore: InMemoryJournalStore(),
+    journalStore: store ?? InMemoryJournalStore(),
     credentials: InMemoryOperatorCredentialStore(),
     deskId: 'test-balie',
   );
@@ -215,6 +221,7 @@ final Finder _incomplete =
 final Finder _refusal = find.byKey(const ValueKey<String>('late-refusal'));
 final Finder _indicator =
     find.byKey(const ValueKey<String>('late-scanner-indicator'));
+final Finder _cancel = find.byKey(const ValueKey<String>('late-scan-cancel'));
 
 String _textOf(WidgetTester tester, Finder finder) =>
     tester.widget<Text>(finder).data ?? '';
@@ -420,6 +427,8 @@ void main() {
     expect(_textOf(tester, _name), 'Jonas Peeters');
     expect(beep.played, 1);
     expect(_textOf(tester, _refusal), contains('geweigerd'));
+    // …and it names the way out of a wrong scan (#457).
+    expect(_textOf(tester, _refusal), contains('druk op Annuleren'));
     expect(desk.journal!.records, isEmpty);
 
     // The first student is confirmed; the second rescans and is taken.
@@ -456,6 +465,231 @@ void main() {
     expect(beep.played, 0);
     expect(_refusal, findsNothing);
     expect(_textOf(tester, _name), 'Jonas Peeters');
+  });
+
+  group('a wrong scan can be cancelled before a reason is picked (#457)', () {
+    /// What the **klaar om te scannen** badge currently says.
+    String indicator(WidgetTester tester) =>
+        tester
+            .widget<Text>(find.descendant(
+              of: _indicator,
+              matching: find.byType(Text),
+            ))
+            .data ??
+        '';
+
+    testWidgets(
+        'Annuleren is offered only while a registerable student is held',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      // Nothing on screen, nothing to cancel.
+      expect(_idle, findsOneWidget);
+      expect(_cancel, findsNothing);
+
+      // An unknown or incomplete scan is replaced by the next one anyway, so it
+      // has no use for a way out.
+      await _scan(tester, '424242');
+      expect(_unknown, findsOneWidget);
+      expect(_cancel, findsNothing);
+      await _scan(tester, '999999');
+      expect(_incomplete, findsOneWidget);
+      expect(_cancel, findsNothing);
+
+      await _scan(tester, '123456');
+      expect(_textOf(tester, _name), 'Jonas Peeters');
+      expect(_cancel, findsOneWidget);
+      expect(
+        find.descendant(of: _cancel, matching: find.text('Annuleren')),
+        findsOneWidget,
+      );
+      expect(tester.widget<ButtonStyleButton>(_cancel).enabled, isTrue);
+    });
+
+    testWidgets(
+        'Annuleren lets go of the student with nothing journalled or printed, '
+        'hands the keyboard back, and the next scan is taken without a beep',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final _CountingBeep beep = _CountingBeep();
+      final _RecordingTransport tickets = _RecordingTransport();
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        // A desk with a printer, so a ticket that should not exist would show.
+        preferences: await _prefsWithPrinter('balie-printer'),
+        child: LateArrivalsScreen(
+          bootstrap: _harness(
+            live: _liveWithPrinter('bonprinter.invalid'),
+          ).bootstrap,
+          beep: beep,
+          ticketTransport: tickets,
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The wrong card, and then the right one — refused behind it, which is
+      // the dead end this closes.
+      await _scan(tester, '123456');
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Jonas Peeters');
+      expect(beep.played, 1);
+      expect(_refusal, findsOneWidget);
+
+      await tester.tap(_cancel);
+      await tester.pumpAndSettle();
+
+      // Gone, refusal and all, and nothing was written or printed for him.
+      expect(_name, findsNothing);
+      expect(_idle, findsOneWidget);
+      expect(_refusal, findsNothing);
+      expect(_cancel, findsNothing);
+      expect(desk.journal!.records, isEmpty);
+      expect(tickets.sent, isEmpty);
+      // The button did not keep the keyboard: the scanner has it.
+      expect(indicator(tester), 'KLAAR OM TE SCANNEN');
+
+      // The right student rescans and is taken, with no second refusal tone.
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Lea Janssens');
+      expect(_refusal, findsNothing);
+      expect(beep.played, 1);
+
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(
+        desk.journal!.records.map((LateArrivalRecord r) => r.displayName),
+        <String>['Lea Janssens'],
+      );
+      expect(tickets.sent, hasLength(1));
+      expect(String.fromCharCodes(tickets.sent.single), contains('Lea'));
+      expect(
+        String.fromCharCodes(tickets.sent.single),
+        isNot(contains('Jonas')),
+      );
+    });
+
+    testWidgets(
+        'Escape cancels a held student, and is left alone when there is '
+        'nothing to cancel', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final _CountingBeep beep = _CountingBeep();
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap, beep: beep),
+      ));
+      await tester.pumpAndSettle();
+
+      // Nothing held: the key is not this screen's to take.
+      expect(await tester.sendKeyEvent(LogicalKeyboardKey.escape), isFalse);
+      await tester.pumpAndSettle();
+      expect(_idle, findsOneWidget);
+
+      // An unknown code is not a student to let go of either.
+      await _scan(tester, '424242');
+      expect(await tester.sendKeyEvent(LogicalKeyboardKey.escape), isFalse);
+      await tester.pumpAndSettle();
+      expect(_unknown, findsOneWidget);
+
+      await _scan(tester, '123456');
+      await _scan(tester, '223344');
+      expect(_refusal, findsOneWidget);
+
+      expect(await tester.sendKeyEvent(LogicalKeyboardKey.escape), isTrue);
+      await tester.pumpAndSettle();
+
+      expect(_name, findsNothing);
+      expect(_idle, findsOneWidget);
+      expect(_refusal, findsNothing);
+      expect(desk.journal!.records, isEmpty);
+      expect(indicator(tester), 'KLAAR OM TE SCANNEN');
+
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Lea Janssens');
+      expect(beep.played, 1);
+    });
+
+    testWidgets(
+        'neither the button nor Escape lets go while the registration is '
+        'being written', (WidgetTester tester) async {
+      // By then the journal line may already be on disk and the ticket about
+      // to print: a screen that dropped the student would no longer say what
+      // is happening to them.
+      _useTallWindow(tester);
+      final _GatedJournalStore store = _GatedJournalStore();
+      final LateArrivalDesk desk = await _openDesk(tester, store: store);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      await _scan(tester, '123456');
+      final Completer<void> gate = Completer<void>();
+      store.gate = gate;
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pump();
+
+      // The write is in flight.
+      expect(tester.widget<ButtonStyleButton>(_cancel).enabled, isFalse);
+      await tester.tap(_cancel);
+      await tester.pump();
+      expect(await tester.sendKeyEvent(LogicalKeyboardKey.escape), isFalse);
+      await tester.pump();
+      expect(_textOf(tester, _name), 'Jonas Peeters');
+
+      // …and it lands exactly as it would have with no cancel attempted.
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(desk.journal!.records.single.displayName, 'Jonas Peeters');
+      expect(_idle, findsOneWidget);
+    });
+
+    testWidgets(
+        'a registration that could not be written can be cancelled once it is '
+        'entered in Smartschool by hand', (WidgetTester tester) async {
+      // The other dead end the cancel opens: the error tells the operator to
+      // register the student in Smartschool themselves, after which the only
+      // thing left on screen is a student nobody should press a reason for.
+      _useTallWindow(tester);
+      final _GatedJournalStore store = _GatedJournalStore();
+      final LateArrivalDesk desk = await _openDesk(tester, store: store);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      await _scan(tester, '123456');
+      store.failure = const _DiskFull();
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+
+      final Finder error =
+          find.byKey(const ValueKey<String>('late-register-error'));
+      expect(_textOf(tester, error), contains('niet bewaard'));
+      expect(_textOf(tester, _name), 'Jonas Peeters');
+
+      await tester.tap(_cancel);
+      await tester.pumpAndSettle();
+
+      expect(error, findsNothing);
+      expect(_name, findsNothing);
+      expect(_idle, findsOneWidget);
+      expect(desk.journal!.records, isEmpty);
+    });
   });
 
   testWidgets(
@@ -1104,3 +1338,45 @@ final CosmosException _unprovisionedContainer = CosmosContainerNotProvisioned(
         'x-ms-request-charge: 0, x-ms-session-token: 0:-1#42',
   }),
 );
+
+/// An [InMemoryJournalStore] whose [append] can be held open or made to fail,
+/// so a test can look at the screen *while* a registration is being written
+/// (#457) — or after it could not be.
+class _GatedJournalStore implements JournalStore {
+  final InMemoryJournalStore _inner = InMemoryJournalStore();
+
+  /// When set, [append] waits on it before doing anything.
+  Completer<void>? gate;
+
+  /// When set, [append] throws it instead of writing.
+  Object? failure;
+
+  @override
+  Future<void> append(SchoolDay day, String line) async {
+    final Completer<void>? held = gate;
+    if (held != null) await held.future;
+    final Object? fail = failure;
+    if (fail != null) throw fail;
+    await _inner.append(day, line);
+  }
+
+  @override
+  Future<List<SchoolDay>> days() => _inner.days();
+
+  @override
+  Future<void> delete(SchoolDay day) => _inner.delete(day);
+
+  @override
+  Future<String> read(SchoolDay day) => _inner.read(day);
+
+  @override
+  String locationOf(SchoolDay day) => _inner.locationOf(day);
+}
+
+/// What a journal write that could not land throws.
+class _DiskFull implements Exception {
+  const _DiskFull();
+
+  @override
+  String toString() => 'schijf vol';
+}
