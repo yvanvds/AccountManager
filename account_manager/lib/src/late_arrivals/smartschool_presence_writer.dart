@@ -260,23 +260,27 @@ ss.DayPart dayPartOf(HalfDay part) => switch (part) {
 ///   other [ss.SmartschoolPresenceError]: a save the module refused
 ///   (`errors[]`), and the typed preconditions it checks before sending
 ///   anything — a pupil the class no longer lists, a class the account may not
-///   confirm for, an error page that is not the login chain. None of those is
-///   fixed by signing in again.
-/// - anything else, returned unchanged — transient, retried with backoff. The
-///   [ss.SmartschoolConnectionError] is the one that matters here (#455):
-///   Smartschool was never reached, so the session is not known to be bad and
-///   a fresh login would only hit the same network. On 0.2.10 the library
-///   wrapped it in an authentication error, and the drain spent its capped
-///   re-authentications on an unplugged cable before it fell through to the
-///   backoff it should have started with.
+///   confirm for, a half-day a requeued write may not overwrite. None of those
+///   is fixed by signing in again, nor by asking again.
+/// - anything else, returned unchanged — transient, retried with backoff. Two
+///   of the library's own types matter here. A [ss.SmartschoolConnectionError]
+///   (#455): Smartschool was never reached, so the session is not known to be
+///   bad and a fresh login would only hit the same network. On 0.2.10 the
+///   library wrapped it in an authentication error, and the drain spent its
+///   capped re-authentications on an unplugged cable before it fell through to
+///   the backoff it should have started with. And a
+///   [ss.SmartschoolPresenceUnreadableAnswerError] (#461): an answer that was
+///   empty, an HTML page or broken JSON, such as a proxy's 502. It is a
+///   [ss.SmartschoolPresenceError] too, but not a refusal; see the reasoning
+///   at its branch below.
 ///
 /// Until 0.3.0 the library reported an HTML answer in one sentence for two
 /// causes ("the session may have expired, **or** the account lacks Presence
 /// access") and this function read that sentence, choosing expiry as the safe
 /// reading. The typed error (`dartschool#5`) made the message match go away:
-/// the login chain is now a [ss.SmartschoolSessionExpiredError], and any other
-/// HTML page stays a [ss.SmartschoolPresenceError] whose message names the HTTP
-/// status instead.
+/// the login chain is now a [ss.SmartschoolSessionExpiredError]. Any other
+/// answer it cannot read has had a type of its own since dartschool#137, so
+/// this function still never reads a message.
 Object classifyPresenceFailure(Object error) {
   if (error is PresenceSessionExpired || error is PresenceRejected) {
     return error;
@@ -289,6 +293,34 @@ Object classifyPresenceFailure(Object error) {
   if (error is ss.SmartschoolAuthenticationError) {
     return PresenceSessionExpired(error.message);
   }
+  if (error is ss.SmartschoolPresenceUnreadableAnswerError) {
+    // An answer the library could not read: empty, an HTML page where JSON
+    // belongs, or JSON that breaks off (dartschool#137). Not the module saying
+    // no — its refusals come as JSON (`errors[]`) or as the typed checks below
+    // — but whatever stood between the desk and the module: a proxy's 502, a
+    // 503 during maintenance, an answer cut off. Retry it (#461).
+    //
+    // Every kind and every status, the `200` and `500` HTML pages included.
+    // Smartschool's generic error page is also how the module answers a
+    // request it cannot handle, which a retry gets again. Retrying is still
+    // the right call, for two reasons. Such an answer is about the endpoint,
+    // the account or the proxy, never about this one pupil, so the next
+    // registration would get it too. As a rejection, the drain gives the
+    // record up and moves on to the next one, so the whole queue fails
+    // record by record: what a desk saw live on 2026-10-07, when v1.4.0 read
+    // an empty answer as one. As a transient failure, the drain's
+    // `maxAttempts` bounds it: one record ends *mislukt* with this error, the
+    // drain stands down as `degraded`, and everything behind it stays queued
+    // on disk until Smartschool answers again. A real refusal costs only the
+    // backoff.
+    //
+    // Retrying the save itself (`/Presence/Class/savePupilsPresences`) is
+    // safe, even though nobody knows whether it landed. The next call reads
+    // the class first and updates the half-day's record, never adds a second
+    // one (#399). A requeued write's `onlyReplacing` allows the "Te laat" that
+    // the first save may have stored ([requeuedWriteMayReplace]).
+    return error;
+  }
   if (error is ss.SmartschoolPresenceChangeRefusedError) {
     // The `onlyReplacing` guard a requeued write carries (#460): the half-day
     // holds something recorded since the scan. Terminal like any refusal, but
@@ -297,12 +329,17 @@ Object classifyPresenceFailure(Object error) {
   }
   if (error is ss.SmartschoolPresenceError) {
     // The server's `errors[]` when it rejected the save, the client-side
-    // precondition message otherwise. Either way it is what the operator needs
-    // to read, verbatim.
+    // precondition message otherwise: a class, code or pupil it could not
+    // resolve, or a class the account may not confirm for. Either way it is
+    // what the operator needs to read, verbatim.
     return PresenceRejected(
       error.errors.isEmpty ? error.message : error.errors.join('; '),
     );
   }
-  // A 502, a disposed client, anything the library did not name. Retry it.
+  // Anything the library did not name: a disposed client, a `DioException` it
+  // passed on as is, an I/O error. Nothing in it says the registration is
+  // wrong, so retry it. (A gateway's 502 does not land here: the library takes
+  // every HTTP status as an answer, so its error page is the unreadable
+  // answer above.)
   return error;
 }

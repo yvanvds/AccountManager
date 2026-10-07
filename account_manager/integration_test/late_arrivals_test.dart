@@ -16,6 +16,8 @@ import 'package:account_manager/src/late_arrivals/late_arrival_printer.dart'
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/late_arrivals/refusal_beep.dart'
     show RefusalBeep;
+import 'package:account_manager/src/late_arrivals/smartschool_presence_writer.dart'
+    show SmartschoolPresenceSession, SmartschoolPresenceWriter;
 import 'package:account_manager/src/settings/connection_config.dart';
 import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_manager/src/settings/settings_bootstrap.dart'
@@ -1538,6 +1540,169 @@ void main() {
     });
 
     testWidgets(
+        'a Presence answer that cannot be read — a gateway\'s error page — is '
+        'retried and lands, and the desk never shows the registration as '
+        'mislukt (#461)', (WidgetTester tester) async {
+      // The bug, end to end. A proxy in front of Smartschool answered one
+      // Presence request with its 502 page, and the desk gave the registration
+      // up at once: *mislukt*, for a hiccup that was over seconds later.
+      //
+      // This needs the real app, because the fix is a chain no single layer
+      // shows: the library's typed error, the real `SmartschoolPresenceWriter`
+      // classifying it, the real drain backing off and sending it again, the
+      // journal on a real file, and the queue panel the drain's status redraws
+      // on the real tab. Only the Smartschool session underneath the writer is
+      // a fake — a presence write is a write against the school's tenant, and
+      // the live-testing policy keeps those out of CI.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-461-');
+      addTearDown(() => deleteTempDir(dir));
+      final Directory journalDir =
+          Directory('${dir.path}${Platform.pathSeparator}journaal');
+
+      // The first write meets the gateway's page; the second waits at the
+      // gate until the test has looked at the desk in between.
+      final _ScriptedPresenceSession session = _ScriptedPresenceSession()
+        ..failures.add(
+          ss.SmartschoolPresenceUnreadableAnswerError.fromPage(
+            '<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head>'
+            '<body><center><h1>502 Bad Gateway</h1></center></body></html>',
+            path: '/Presence/Main/getConfig',
+            statusCode: 502,
+          ),
+        )
+        ..gate = Completer<void>();
+      addTearDown(() {
+        // Never leave the drain hanging on the gate, whatever failed first.
+        final Completer<void>? gate = session.gate;
+        if (gate != null && !gate.isCompleted) gate.complete();
+      });
+
+      const AppSettings base = AppSettings();
+      final LiveSettings live = LiveSettings(
+        base.copyWith(
+          smartschool:
+              base.smartschool.copyWith(uri: 'https://arcadia.smartschool.be'),
+        ),
+      );
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: live,
+      );
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(journalDir),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'onthaal-461',
+        settings: live,
+        // The production writer, over the fake session: the classification is
+        // what is under test.
+        writerFor: (_, __) => SmartschoolPresenceWriter(session),
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+        refusalBeep: _CountingRefusalBeep(),
+        ticketTransport: _RecordingTicketTransport(),
+        preferences: LocalPreferences.inMemory(),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      await pumpUntil(
+        tester,
+        'the desk to open its journal and attach the drain',
+        () => desk.ready && desk.draining,
+      );
+
+      String textOf(Key key) => tester.widget<Text>(find.byKey(key)).data ?? '';
+      final Finder failedBadge =
+          find.byKey(const ValueKey<String>('late-queue-failed'));
+
+      // --- Jonas is late; Smartschool's gateway is having a bad second. -------
+      for (final String character in '123456'.split('')) {
+        await tester.sendKeyEvent(
+          _scannerKeys[character]!,
+          character: character,
+        );
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(textOf(const ValueKey<String>('late-scan-name')), 'Jonas Peeters');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+
+      // The first write came back unreadable; after its backoff the drain is
+      // sending it again. Real file I/O and a real background drain behind the
+      // tap (#425): wait on what happened, never on a frame.
+      await pumpUntil(
+        tester,
+        'the drain to send the registration a second time after the 502',
+        () => session.calls == 2,
+      );
+      final LateArrivalRecord jonas = desk.journal!.records.single;
+
+      // In between, the desk says it is still sending — not that it failed.
+      expect(jonas.status, isNot(LateArrivalStatus.failed));
+      expect(desk.journal!.failures, isEmpty);
+      expect(failedBadge, findsNothing);
+      expect(find.text('1 IN WACHTRIJ'), findsOneWidget);
+      expect(
+        textOf(const ValueKey<String>('late-queue-line')),
+        'Deze registraties worden op de achtergrond naar Smartschool '
+        'verstuurd.',
+      );
+      expect(
+          find.byKey(const ValueKey<String>('late-queue-retry')), findsNothing);
+
+      // --- Smartschool answers again. ------------------------------------------
+      session.gate!.complete();
+      await pumpUntil(
+        tester,
+        "Jonas's registration to be confirmed by Smartschool",
+        () =>
+            desk.journal!.byId(jonas.id)!.status ==
+                LateArrivalStatus.confirmed &&
+            find.text('0 IN WACHTRIJ').evaluate().isNotEmpty,
+      );
+
+      expect(session.accepted, <int>[12016]);
+      // An unreadable answer says nothing about the session: no new login.
+      expect(session.signIns, 0);
+      expect(failedBadge, findsNothing);
+      expect(
+        textOf(const ValueKey<String>('late-queue-line')),
+        'Alles is naar Smartschool verstuurd.',
+      );
+      // The day file never held a give-up for it, not even for a moment.
+      final String onDisk = journalDir
+          .listSync()
+          .whereType<File>()
+          .map((File f) => f.readAsStringSync())
+          .join();
+      expect(onDisk, contains('"confirmed"'));
+      expect(onDisk, isNot(contains('"failed"')));
+
+      // Unmount before letting go of the desk, so the scope is not listening to
+      // a disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'the desk picks its ticket printer off the shared list, prints on the '
         'one it picked, and is still pointed at it after a restart (#436)',
         (WidgetTester tester) async {
@@ -1972,4 +2137,47 @@ class _RecordingPresenceWriter implements LatePresenceWriter {
 
   @override
   Future<void> reauthenticate() async {}
+}
+
+/// Stands in for the signed-in Smartschool session *under* the production
+/// [SmartschoolPresenceWriter], so a run goes through the writer's own failure
+/// classification (#461) rather than around it.
+///
+/// A fake for the same reason [_RecordingPresenceWriter] is one: `setLate` is
+/// a write against the school's real tenant.
+class _ScriptedPresenceSession implements SmartschoolPresenceSession {
+  /// Every call, accepted or not.
+  int calls = 0;
+
+  /// Every write Smartschool accepted, by internal user id.
+  final List<int> accepted = <int>[];
+
+  /// How often the writer asked for a fresh sign-in.
+  int signIns = 0;
+
+  /// Thrown one per call, in order, as the library throws them.
+  final List<Object> failures = <Object>[];
+
+  /// When set, a write that is not failed waits for it before it is accepted,
+  /// so a test can look at the desk while that write is in flight.
+  Completer<void>? gate;
+
+  @override
+  Future<void> setLate({
+    required int userId,
+    required int classGroupId,
+    required DateTime date,
+    required ss.DayPart part,
+    required bool withoutValidReason,
+    required String motivation,
+    Set<String>? onlyReplacing,
+  }) async {
+    calls++;
+    if (failures.isNotEmpty) throw failures.removeAt(0);
+    await gate?.future;
+    accepted.add(userId);
+  }
+
+  @override
+  Future<void> signIn() async => signIns++;
 }

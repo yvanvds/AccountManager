@@ -14,9 +14,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 
 class FakeSession implements SmartschoolPresenceSession {
-  FakeSession({this.failure});
+  FakeSession({this.failure, Iterable<Object> failures = const <Object>[]})
+      : failures = List<Object>.of(failures);
 
+  /// Thrown by every call, after [failures] ran out.
   final Object? failure;
+
+  /// Thrown one per call, in order, before [failure] applies — a Smartschool
+  /// that answers the next calls badly and then recovers (#461).
+  final List<Object> failures;
+
   int calls = 0;
   int signIns = 0;
   DateTime? lastDate;
@@ -41,6 +48,7 @@ class FakeSession implements SmartschoolPresenceSession {
     lastWithoutValidReason = withoutValidReason;
     lastMotivation = motivation;
     lastOnlyReplacing = onlyReplacing;
+    if (failures.isNotEmpty) throw failures.removeAt(0);
     final Object? error = failure;
     if (error != null) throw error;
   }
@@ -62,6 +70,49 @@ Future<void> write(
       withoutValidReason: false,
       motivation: '08:14 – Bus te laat',
       keepRecordedAbsence: keepRecordedAbsence,
+    );
+
+/// Two students of one class, as the scan resolver hands them to the journal.
+const ScannedStudent jonas = ScannedStudent(
+  scanCode: '123456',
+  wisaId: '123456',
+  smartschoolUid: 'jonas.peeters',
+  displayName: 'Jonas Peeters',
+  className: '3MTa',
+  internalUserId: 4242,
+  classGroupId: 77,
+);
+const ScannedStudent lea = ScannedStudent(
+  scanCode: '223344',
+  wisaId: '223344',
+  smartschoolUid: 'lea.janssens',
+  displayName: 'Lea Janssens',
+  className: '3MTa',
+  internalUserId: 4243,
+  classGroupId: 77,
+);
+
+/// What `PresenceService` throws since dartschool#137 when a proxy answers the
+/// first read of a write with an empty `502`.
+const ss.SmartschoolPresenceUnreadableAnswerError emptyGatewayAnswer =
+    ss.SmartschoolPresenceUnreadableAnswerError(
+  'Empty response from /Presence/Main/getConfig (HTTP 502).',
+  path: '/Presence/Main/getConfig',
+  kind: ss.PresenceUnreadableAnswerKind.empty,
+  statusCode: 502,
+);
+
+/// Smartschool's generic error page where JSON belongs, read the way the
+/// library reads it (dartschool#137).
+ss.SmartschoolPresenceUnreadableAnswerError smartschoolErrorPage({
+  String path = '/Presence/Main/getConfig',
+  int statusCode = 500,
+}) =>
+    ss.SmartschoolPresenceUnreadableAnswerError.fromPage(
+      '<!DOCTYPE html><html><head><title>Smartschool</title></head>'
+      '<body><h1>Oeps, er ging iets mis</h1></body></html>',
+      path: path,
+      statusCode: statusCode,
     );
 
 void main() {
@@ -143,28 +194,91 @@ void main() {
     });
 
     test(
-        'an HTML page that is not the login chain is a rejection, not an '
-        'expiry', () async {
-      // The other half of dartschool#5: Smartschool's generic error page on a
-      // request the module could not handle, with the session accepted. The
-      // message no longer suggests expiry, and signing in again would not help.
-      final FakeSession session = FakeSession(
-        failure: const ss.SmartschoolPresenceError(
-          'The Presence module answered /Presence/Main/getConfig with an HTML '
-          'page (HTTP 500) instead of JSON: it could not handle the request '
-          '(the request is invalid, or the account may lack Presence access).',
-        ),
-      );
+        'an HTML page that is not the login chain is neither an expiry nor a '
+        'rejection: it is retried (#461)', () async {
+      // The other half of dartschool#5: Smartschool's generic error page, with
+      // the session accepted, so signing in again would not help. Until #461
+      // this was a rejection, and a desk gave every registration of a
+      // Smartschool hiccup up at once. It is an answer that could not be read
+      // (dartschool#137), and the drain's attempts bound how often it is
+      // asked again.
+      final ss.SmartschoolPresenceUnreadableAnswerError page =
+          smartschoolErrorPage();
+      expect(page.kind, ss.PresenceUnreadableAnswerKind.html);
+      expect(page.heading, 'Oeps, er ging iets mis');
+
+      final FakeSession session = FakeSession(failure: page);
       await expectLater(
         write(SmartschoolPresenceWriter(session)),
         throwsA(
-          isA<PresenceRejected>().having(
-            (PresenceRejected e) => e.message,
-            'message',
-            contains('HTTP 500'),
+          allOf(
+            same(page),
+            isNot(isA<PresenceRejected>()),
+            isNot(isA<PresenceSessionExpired>()),
           ),
         ),
       );
+      expect(session.signIns, 0);
+    });
+
+    test(
+        'an empty answer from a gateway is transient: returned unchanged, no '
+        're-authentication spent on it (#461)', () async {
+      // The answer of the issue: a proxy in front of Smartschool says 502 and
+      // nothing else. The session is fine; the module never saw the request.
+      final FakeSession session = FakeSession(failure: emptyGatewayAnswer);
+      await expectLater(
+        write(SmartschoolPresenceWriter(session)),
+        throwsA(
+          allOf(
+            same(emptyGatewayAnswer),
+            isNot(isA<PresenceRejected>()),
+            isNot(isA<PresenceSessionExpired>()),
+          ),
+        ),
+      );
+      expect(session.signIns, 0);
+    });
+
+    test(
+        'every unreadable answer is transient, whatever its kind, status or '
+        'endpoint — the save included (#461)', () {
+      // Classified on the type alone, never on the message or the status: a
+      // `200` HTML page as much as a `504`, and an answer to the save, which
+      // may or may not have landed and is safe to send again.
+      const List<String> paths = <String>[
+        '/Presence/Main/getConfig',
+        '/Presence/Code/getAllCodes',
+        '/Presence/Class/getClass',
+        '/Presence/Class/savePupilsPresences',
+      ];
+      for (final String path in paths) {
+        for (final int status in <int>[200, 408, 429, 500, 502, 503, 504]) {
+          for (final ss.PresenceUnreadableAnswerKind kind
+              in ss.PresenceUnreadableAnswerKind.values) {
+            final ss.SmartschoolPresenceUnreadableAnswerError answer =
+                ss.SmartschoolPresenceUnreadableAnswerError(
+              'Unreadable answer from $path (HTTP $status).',
+              path: path,
+              kind: kind,
+              statusCode: status,
+            );
+            expect(
+              classifyPresenceFailure(answer),
+              same(answer),
+              reason: '$kind, HTTP $status, $path',
+            );
+          }
+        }
+      }
+      // A status that is not known, too.
+      const ss.SmartschoolPresenceUnreadableAnswerError unknown =
+          ss.SmartschoolPresenceUnreadableAnswerError(
+        'Empty response from /Presence/Class/getClass (status unknown).',
+        path: '/Presence/Class/getClass',
+        kind: ss.PresenceUnreadableAnswerKind.empty,
+      );
+      expect(classifyPresenceFailure(unknown), same(unknown));
     });
 
     test(
@@ -219,6 +333,40 @@ void main() {
           ),
         ),
       );
+    });
+
+    test(
+        'a class the account may not confirm for is a rejection, not an '
+        'unreadable answer (#461)', () async {
+      // A typed precondition: the module's config said no before anything was
+      // sent. Asking again gets the same answer, so it stays terminal, unlike
+      // the unreadable answers next to it.
+      final FakeSession session = FakeSession(
+        failure: const ss.SmartschoolPresenceNoConfirmRightError(
+          'The account may not confirm the half-days of class 3MTa '
+          '(groupID 298): nothing was sent.',
+          userId: 11110,
+          classGroupId: 298,
+          date: '2026-09-07',
+          part: ss.DayPart.morning,
+          classRef: ss.PresenceClassRef(
+            groupId: 298,
+            name: '3MTa',
+            userCanRecord: true,
+          ),
+        ),
+      );
+      await expectLater(
+        write(SmartschoolPresenceWriter(session)),
+        throwsA(
+          isA<PresenceRejected>().having(
+            (PresenceRejected e) => e.message,
+            'message',
+            contains('may not confirm'),
+          ),
+        ),
+      );
+      expect(session.signIns, 0);
     });
 
     test(
@@ -324,6 +472,128 @@ void main() {
     test('an already-classified failure is passed through unchanged', () {
       const PresenceRejected rejected = PresenceRejected('nee');
       expect(classifyPresenceFailure(rejected), same(rejected));
+    });
+  });
+
+  group('an unreadable answer, through the drain (#461)', () {
+    // The real drain over the real writer, with only the session faked: the
+    // classification above is a contract with the drain, and this is the
+    // drain keeping its half of it.
+    final DateTime monday = DateTime(2026, 9, 7, 8, 14);
+
+    Future<LateArrivalRecord> register(
+      LateArrivalJournal journal,
+      ScannedStudent student,
+    ) =>
+        journal.register(
+          scan: ScanRegisterable(student),
+          scannedAt: monday,
+          reasonLabel: 'Bus te laat',
+          reasonIsValid: true,
+        );
+
+    LateArrivalDrain drainOver(
+      LateArrivalJournal journal,
+      FakeSession session, {
+      required List<Duration> waits,
+      int maxAttempts = 5,
+    }) =>
+        LateArrivalDrain(
+          journal: journal,
+          writer: SmartschoolPresenceWriter(session),
+          maxAttempts: maxAttempts,
+          clock: () => monday,
+          sleep: (Duration d) async => waits.add(d),
+        );
+
+    test('is retried after a backoff, and the registration is confirmed',
+        () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord record = await register(journal, jonas);
+      // A gateway that answers nothing, then Smartschool's error page, then a
+      // Smartschool that is back.
+      final FakeSession session = FakeSession(
+        failures: <Object>[emptyGatewayAnswer, smartschoolErrorPage()],
+      );
+      final List<Duration> waits = <Duration>[];
+      final LateArrivalDrain drain = drainOver(journal, session, waits: waits);
+
+      drain.start();
+      await drain.settle();
+
+      expect(session.calls, 3);
+      expect(journal.byId(record.id)!.status, LateArrivalStatus.confirmed);
+      expect(journal.byId(record.id)!.error, isNull);
+      // Backed off, as for a dropped connection; never signed in again.
+      expect(waits, <Duration>[
+        const Duration(seconds: 2),
+        const Duration(seconds: 4),
+      ]);
+      expect(session.signIns, 0);
+      expect(drain.status.isHealthy, isTrue);
+      await drain.close();
+    });
+
+    test(
+        'that keeps coming back stands the drain down after its attempts, and '
+        'keeps the rest of the queue on disk', () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord first = await register(journal, jonas);
+      final LateArrivalRecord second = await register(journal, lea);
+      final FakeSession session = FakeSession(failure: emptyGatewayAnswer);
+      final List<Duration> waits = <Duration>[];
+      final LateArrivalDrain drain =
+          drainOver(journal, session, waits: waits, maxAttempts: 3);
+
+      drain.start();
+      await drain.settle();
+
+      // The first record spent its attempts and is mislukt, with the answer
+      // that could not be read on it; Lea's was never sent.
+      expect(session.calls, 3);
+      expect(journal.byId(first.id)!.status, LateArrivalStatus.failed);
+      expect(
+        journal.byId(first.id)!.error,
+        allOf(contains('/Presence/Main/getConfig'), contains('HTTP 502')),
+      );
+      expect(journal.byId(second.id)!.status, LateArrivalStatus.pending);
+      expect(drain.status.degraded, isTrue);
+      expect(drain.status.outstanding, 1);
+      expect(session.signIns, 0);
+      await drain.close();
+    });
+
+    test(
+        'next to it, a save the module refused is still given up at once, and '
+        'the queue goes on', () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord first = await register(journal, jonas);
+      final LateArrivalRecord second = await register(journal, lea);
+      final FakeSession session = FakeSession(
+        failures: <Object>[
+          const ss.SmartschoolPresenceError(
+            'Saving the presence for userID 4242 failed.',
+            errors: <String>['Geen schrijfrechten voor deze klas.'],
+          ),
+        ],
+      );
+      final List<Duration> waits = <Duration>[];
+      final LateArrivalDrain drain = drainOver(journal, session, waits: waits);
+
+      drain.start();
+      await drain.settle();
+
+      expect(session.calls, 2);
+      expect(journal.byId(first.id)!.status, LateArrivalStatus.failed);
+      expect(
+          journal.byId(first.id)!.error, 'Geen schrijfrechten voor deze klas.');
+      expect(journal.byId(second.id)!.status, LateArrivalStatus.confirmed);
+      expect(waits, isEmpty);
+      expect(drain.status.degraded, isFalse);
+      await drain.close();
     });
   });
 
