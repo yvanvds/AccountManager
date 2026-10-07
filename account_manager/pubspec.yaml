@@ -51,8 +51,29 @@ dependencies:
   # the whole reason this is here — first appears in 0.2.9. Switch to a hosted
   # version once one carrying it is published.
   #
-  # 0.3.5 (the `main` merge of that release): the first pin past the fix for
-  # dartschool#21, which is why it was taken (#455). Since that fix a request
+  # 31aac4c (the `main` merge of dartschool PR #142, past 0.3.5 and not yet
+  # released): the first pin past dartschool#137, which is why it was taken
+  # (#461). An answer of the Presence module that cannot be read — an empty
+  # body, an HTML page where JSON belongs, JSON that breaks off — now arrives
+  # as its own `SmartschoolPresenceUnreadableAnswerError`, still a
+  # `SmartschoolPresenceError`, carrying the endpoint, the HTTP status and what
+  # made it unreadable. Before, it was a plain `SmartschoolPresenceError` that
+  # only its message told apart from a refused save, so a proxy's 502 read as
+  # a refusal and the drain gave the registration up at once. Now
+  # `classifyPresenceFailure` tells it apart by type and retries it.
+  #
+  # The same jump brings dartschool#134: once Smartschool refused the session,
+  # the client logs in before its next request instead of sending it into the
+  # refused session first. The Presence requests are retried after a login
+  # anyway, so for the drain this only saves a refused round trip: a failed
+  # login still throws an authentication or a connection error, a request
+  # refused after that login is still a `SmartschoolSessionExpiredError`, and
+  # `LiveSmartschoolPresenceSession.signIn` still replaces the whole client.
+  # The rest of the jump (dartschool#132, #133, #135, #136, #138: Intradesk,
+  # lesson content, message folders) is in nothing this app calls.
+  #
+  # 0.3.5 (the `main` merge of that release, the pin before): the first pin
+  # past the fix for dartschool#21, taken for it (#455). Since that fix a request
   # that cannot reach Smartschool at all — the host does not resolve, the
   # connection drops or times out, the TLS handshake fails — throws
   # `SmartschoolConnectionError` with the `DioException` as its `cause`,
@@ -63,7 +84,7 @@ dependencies:
   # network that was simply down. The 302-after-login fix the previous pin was
   # taken for (dartschool#6, #432) is in every later commit, this one included.
   #
-  # The same jump brings the typed errors the Te laat layer now matches on
+  # That jump also brought the typed errors the Te laat layer matches on
   # instead of on message text: `SmartschoolSessionExpiredError` (dartschool#5,
   # which `smartschool_presence_writer.dart` used to approximate by reading the
   # "HTML instead of JSON" sentence), the `SmartschoolPresenceError` subtypes,
@@ -72,7 +93,7 @@ dependencies:
   flutter_smartschool:
     git:
       url: https://github.com/yvanvds/dartschool.git
-      ref: 971d1bac66bb6e4751181ea27a58cb86050ed33c
+      ref: 31aac4c55c4540c641191a9ac4f0ba0b129e1a1f
 
   # For the interactive loopback fallback's injectable HTTP client (the token
   # endpoint), shared with the OAuthAuthProvider reused from azure_api.
