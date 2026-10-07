@@ -8,14 +8,19 @@
 /// out of CI and in the operator's hands.
 library;
 
+import 'package:account_manager/src/late_arrivals/operator_credentials.dart'
+    show describeRefusedSmartschoolSignIn;
 import 'package:account_manager/src/late_arrivals/smartschool_presence_writer.dart';
 import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 
 class FakeSession implements SmartschoolPresenceSession {
-  FakeSession({this.failure, Iterable<Object> failures = const <Object>[]})
-      : failures = List<Object>.of(failures);
+  FakeSession({
+    this.failure,
+    Iterable<Object> failures = const <Object>[],
+    this.signInFailure,
+  }) : failures = List<Object>.of(failures);
 
   /// Thrown by every call, after [failures] ran out.
   final Object? failure;
@@ -23,6 +28,10 @@ class FakeSession implements SmartschoolPresenceSession {
   /// Thrown one per call, in order, before [failure] applies — a Smartschool
   /// that answers the next calls badly and then recovers (#461).
   final List<Object> failures;
+
+  /// Thrown by every [signIn] — a login Smartschool refuses (#464). `null`
+  /// signs in.
+  final Object? signInFailure;
 
   int calls = 0;
   int signIns = 0;
@@ -54,7 +63,11 @@ class FakeSession implements SmartschoolPresenceSession {
   }
 
   @override
-  Future<void> signIn() async => signIns++;
+  Future<void> signIn() async {
+    signIns++;
+    final Object? error = signInFailure;
+    if (error != null) throw error;
+  }
 }
 
 Future<void> write(
@@ -114,6 +127,15 @@ ss.SmartschoolPresenceUnreadableAnswerError smartschoolErrorPage({
       path: path,
       statusCode: statusCode,
     );
+
+/// The sentence the desk shows, and the text kept behind it — the split
+/// `DeskWarning.fromText` makes (#463).
+(String, String) linesOf(String text) {
+  final int newline = text.indexOf('\n');
+  return newline < 0
+      ? (text, '')
+      : (text.substring(0, newline), text.substring(newline + 1));
+}
 
 void main() {
   group('a successful write', () {
@@ -598,14 +620,6 @@ void main() {
   });
 
   group('a retried failure in the operator\'s words (#463)', () {
-    /// The sentence the desk shows, and the text kept behind it.
-    (String, String) linesOf(String text) {
-      final int newline = text.indexOf('\n');
-      return newline < 0
-          ? (text, '')
-          : (text.substring(0, newline), text.substring(newline + 1));
-    }
-
     test(
         'an answer that could not be read is a Dutch sentence with its HTTP '
         'status, and the library\'s text on the line below', () {
@@ -721,6 +735,236 @@ void main() {
           isNot(contains('SmartschoolPresenceUnreadableAnswerError')));
       expect(detail, '$emptyGatewayAnswer');
       await drain.close();
+    });
+  });
+
+  group('a refused login in the operator\'s words (#464)', () {
+    const String fixIt = 'Pas de aanmelding aan bij Instellingen → Te laat, '
+        'test ze met Aanmelding testen en probeer daarna opnieuw.';
+
+    /// Every login refusal the library types, and the cause the operator's
+    /// sentence has to name.
+    const List<(ss.SmartschoolAuthenticationError, String)> refusals =
+        <(ss.SmartschoolAuthenticationError, String)>[
+      (
+        ss.SmartschoolInvalidCredentialsError(),
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
+      ),
+      (
+        ss.SmartschoolTwoFactorRequiredError(),
+        'Smartschool vraagt voor dit account een tweestapsverificatie, maar '
+            'bij de aanmelding staat geen geheime sleutel van de '
+            'authenticator (MFA).',
+      ),
+      (
+        ss.SmartschoolTwoFactorRejectedError(),
+        'Smartschool aanvaardde de code van de tweestapsverificatie niet. '
+            'Kijk de geheime sleutel van de authenticator (MFA) na, en of de '
+            'klok van deze computer juist staat.',
+      ),
+      (
+        ss.SmartschoolInvalidTotpSecretError(),
+        'De geheime sleutel van de authenticator (MFA) is geen geldige '
+            'sleutel: vul de tekenreeks in die Smartschool toont bij het '
+            'instellen van de authenticator, niet de code van zes cijfers uit '
+            'de app.',
+      ),
+      (
+        ss.SmartschoolUnsupportedTwoFactorMethodError(<String>['sms']),
+        'Dit account gebruikt een tweestapsverificatie die het programma niet '
+            'kan invullen: alleen een authenticator-app (zoals Google '
+            'Authenticator) wordt ondersteund.',
+      ),
+      (
+        ss.SmartschoolAccountVerificationRequiredError(),
+        'Smartschool vraagt voor dit account een accountverificatie met de '
+            'geboortedatum, maar in het MFA-veld van de aanmelding staat geen '
+            'datum (jjjj-mm-dd).',
+      ),
+      (
+        ss.SmartschoolAccountVerificationRejectedError(),
+        'Smartschool aanvaardde de geboortedatum van de accountverificatie '
+            'niet. Kijk de datum in het MFA-veld na (jjjj-mm-dd).',
+      ),
+    ];
+
+    test(
+        'each refusal names its cause in Dutch and where to fix it, with the '
+        'library\'s text on the line below', () {
+      for (final (ss.SmartschoolAuthenticationError error, String cause)
+          in refusals) {
+        final String type = '${error.runtimeType}';
+        expect(describeRefusedSmartschoolSignIn(error), cause, reason: type);
+        final (String sentence, String detail) =
+            linesOf(describePresenceFailure(error));
+        expect(sentence, '$cause $fixIt', reason: type);
+        // No Dart type name and none of the library's English on the line
+        // the operator reads — all of it on the line below.
+        expect(sentence, isNot(contains(type)));
+        expect(sentence, isNot(contains(error.message)));
+        expect(detail, '$error', reason: type);
+        expect(detail, startsWith('$type: '));
+      }
+    });
+
+    test(
+        'a session Smartschool no longer accepts is not a refused login, nor '
+        'is anything else: those keep their own text', () {
+      for (final Object error in <Object>[
+        const ss.SmartschoolSessionExpiredError(),
+        const ss.SmartschoolAuthenticationError('Login expired'),
+        const ss.SmartschoolConnectionError('Unable to reach Smartschool'),
+        StateError('SmartschoolClient was disposed'),
+      ]) {
+        expect(describeRefusedSmartschoolSignIn(error), isNull,
+            reason: '$error');
+      }
+      expect(
+        describePresenceFailure(const ss.SmartschoolSessionExpiredError()),
+        '${const ss.SmartschoolSessionExpiredError()}',
+      );
+    });
+
+    test(
+        'a refused login is still an expired session — the drain signs in '
+        'again — and it carries the operator\'s words', () async {
+      for (final (ss.SmartschoolAuthenticationError error, _) in refusals) {
+        await expectLater(
+          write(SmartschoolPresenceWriter(FakeSession(failure: error))),
+          throwsA(
+            isA<PresenceSessionExpired>().having(
+              (PresenceSessionExpired e) => e.message,
+              'message',
+              describePresenceFailure(error),
+            ),
+          ),
+          reason: '${error.runtimeType}',
+        );
+      }
+    });
+
+    test('a session Smartschool no longer accepts keeps the library\'s message',
+        () async {
+      await expectLater(
+        write(
+          SmartschoolPresenceWriter(
+            FakeSession(failure: const ss.SmartschoolSessionExpiredError()),
+          ),
+        ),
+        throwsA(
+          isA<PresenceSessionExpired>().having(
+            (PresenceSessionExpired e) => e.message,
+            'message',
+            'Smartschool did not accept the session.',
+          ),
+        ),
+      );
+    });
+
+    group('through the real drain over the real writer', () {
+      final DateTime monday = DateTime(2026, 9, 7, 8, 14);
+
+      Future<(LateArrivalJournal, LateArrivalRecord)> journalWithJonas() async {
+        final LateArrivalJournal journal =
+            await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+        final LateArrivalRecord record = await journal.register(
+          scan: const ScanRegisterable(jonas),
+          scannedAt: monday,
+          reasonLabel: 'Bus te laat',
+          reasonIsValid: true,
+        );
+        return (journal, record);
+      }
+
+      test(
+          'a changed password: the registration is given up on after the same '
+          'attempts and re-sign-ins, naming the password', () async {
+        // What the live session does once the password changed: every write
+        // makes the client log in on its own and is refused, and so is every
+        // fresh sign-in the drain asks for.
+        const ss.SmartschoolInvalidCredentialsError refused =
+            ss.SmartschoolInvalidCredentialsError();
+        final (LateArrivalJournal journal, LateArrivalRecord record) =
+            await journalWithJonas();
+        final FakeSession session =
+            FakeSession(failure: refused, signInFailure: refused);
+        final List<Duration> waits = <Duration>[];
+        final LateArrivalDrain drain = LateArrivalDrain(
+          journal: journal,
+          writer: SmartschoolPresenceWriter(session),
+          clock: () => monday,
+          sleep: (Duration d) async => waits.add(d),
+          describeFailure: describePresenceFailure,
+        );
+
+        drain.start();
+        await drain.settle();
+
+        // The drain's defaults, untouched: five attempts, two re-sign-ins,
+        // the same backoff between them.
+        expect(session.calls, 5);
+        expect(session.signIns, 2);
+        expect(waits, const <Duration>[
+          Duration(seconds: 2),
+          Duration(seconds: 4),
+          Duration(seconds: 8),
+          Duration(seconds: 16),
+        ]);
+        expect(drain.status.degraded, isTrue);
+
+        final LateArrivalRecord failed = journal.byId(record.id)!;
+        expect(failed.status, LateArrivalStatus.failed);
+        final (String sentence, String detail) = linesOf(failed.error!);
+        expect(
+          sentence,
+          'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet. '
+          '$fixIt',
+        );
+        expect(detail, '$refused');
+        await drain.close();
+      });
+
+      test(
+          'a re-sign-in that is refused on the last attempt keeps the drain\'s '
+          'own lead-in, and names the second factor', () async {
+        // A session Smartschool stopped accepting, and a login whose second
+        // factor it then rejects: here the last thing that failed is the
+        // drain's own re-sign-in, so its words are the ones the record keeps.
+        const ss.SmartschoolTwoFactorRejectedError rejected =
+            ss.SmartschoolTwoFactorRejectedError();
+        final (LateArrivalJournal journal, LateArrivalRecord record) =
+            await journalWithJonas();
+        final FakeSession session = FakeSession(
+          failure: const ss.SmartschoolSessionExpiredError(),
+          signInFailure: rejected,
+        );
+        final LateArrivalDrain drain = LateArrivalDrain(
+          journal: journal,
+          writer: SmartschoolPresenceWriter(session),
+          maxAttempts: 2,
+          clock: () => monday,
+          sleep: (Duration d) async {},
+          describeFailure: describePresenceFailure,
+        );
+
+        drain.start();
+        await drain.settle();
+
+        expect(session.calls, 2);
+        expect(session.signIns, 2);
+        final LateArrivalRecord failed = journal.byId(record.id)!;
+        expect(failed.status, LateArrivalStatus.failed);
+        final (String sentence, String detail) = linesOf(failed.error!);
+        expect(
+          sentence,
+          'Aanmelden bij Smartschool lukte niet: Smartschool aanvaardde de '
+          'code van de tweestapsverificatie niet. Kijk de geheime sleutel van '
+          'de authenticator (MFA) na, en of de klok van deze computer juist '
+          'staat. $fixIt',
+        );
+        expect(detail, '$rejected');
+        await drain.close();
+      });
     });
   });
 

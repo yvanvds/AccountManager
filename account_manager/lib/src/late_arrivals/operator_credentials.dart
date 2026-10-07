@@ -349,13 +349,67 @@ Future<void> probeSmartschoolOperatorSignInLive(
   await client.ensureAuthenticated();
 }
 
+/// What is wrong with a login Smartschool refused, in the operator's words —
+/// or `null` when [error] is not such a refusal (#464).
+///
+/// A refusal is one of the library's authentication errors that it counts as
+/// rejected credentials itself (the list behind
+/// `SmartschoolClient.resetLoginAttempts`): the password, the second factor or
+/// the account verification did not get past the login. Each one names its
+/// cause, because each has a different fix in the same three fields of
+/// **Instellingen → Te laat** — the password, or the MFA field, which holds the
+/// authenticator's secret key or, for an account verification, a date of
+/// birth. They are told apart by type, never by the library's message.
+///
+/// One sentence about the login and nothing else: no Dart type name, none of
+/// the library's English, and no advice on where to go, which depends on where
+/// it is shown. A session Smartschool no longer accepts
+/// ([ss.SmartschoolSessionExpiredError]) is not a refused login, and neither is
+/// anything else; those return `null`.
+///
+/// The drain's describer (`describePresenceFailure`) puts this on a
+/// registration's *mislukt* line. **Aanmelding testen** does not use it yet: a
+/// refusal there still comes back in the library's own words (see
+/// [describeSmartschoolSignInFailure], #467).
+String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
+      ss.SmartschoolInvalidCredentialsError() =>
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
+      ss.SmartschoolTwoFactorRequiredError() =>
+        'Smartschool vraagt voor dit account een tweestapsverificatie, maar '
+            'bij de aanmelding staat geen geheime sleutel van de '
+            'authenticator (MFA).',
+      ss.SmartschoolTwoFactorRejectedError() =>
+        'Smartschool aanvaardde de code van de tweestapsverificatie niet. '
+            'Kijk de geheime sleutel van de authenticator (MFA) na, en of de '
+            'klok van deze computer juist staat.',
+      ss.SmartschoolInvalidTotpSecretError() =>
+        'De geheime sleutel van de authenticator (MFA) is geen geldige '
+            'sleutel: vul de tekenreeks in die Smartschool toont bij het '
+            'instellen van de authenticator, niet de code van zes cijfers uit '
+            'de app.',
+      ss.SmartschoolUnsupportedTwoFactorMethodError() =>
+        'Dit account gebruikt een tweestapsverificatie die het programma niet '
+            'kan invullen: alleen een authenticator-app (zoals Google '
+            'Authenticator) wordt ondersteund.',
+      ss.SmartschoolAccountVerificationRequiredError() =>
+        'Smartschool vraagt voor dit account een accountverificatie met de '
+            'geboortedatum, maar in het MFA-veld van de aanmelding staat geen '
+            'datum (jjjj-mm-dd).',
+      ss.SmartschoolAccountVerificationRejectedError() =>
+        'Smartschool aanvaardde de geboortedatum van de accountverificatie '
+            'niet. Kijk de datum in het MFA-veld na (jjjj-mm-dd).',
+      _ => null,
+    };
+
 /// What a failed **Aanmelding testen** tells the person at the desk (#455).
 ///
 /// Two kinds of failure come out of the probe, and they call for different
 /// hands. A login Smartschool *refused* — a wrong password, a missing second
 /// factor, a code it did not accept — comes back in the library's own words,
 /// unchanged: those messages already tell the three apart, and the operator is
-/// the one to fix them. A [ss.SmartschoolConnectionError] is the other kind:
+/// the one to fix them. (A registration the drain gave up on over the same
+/// refusal says it in Dutch, [describeRefusedSmartschoolSignIn], #464.) A
+/// [ss.SmartschoolConnectionError] is the other kind:
 /// Smartschool was never reached, so nothing was sent — not the username, not
 /// the password, not the MFA — and no amount of retyping them helps. Until the
 /// library told the two apart (`yvanvds/dartschool#21`) a certificate the PC

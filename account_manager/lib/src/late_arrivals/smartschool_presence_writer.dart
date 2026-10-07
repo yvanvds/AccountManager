@@ -28,6 +28,8 @@ library;
 import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:late_arrivals/late_arrivals.dart';
 
+import 'operator_credentials.dart' show describeRefusedSmartschoolSignIn;
+
 /// The two things the drain needs from a signed-in Smartschool session.
 ///
 /// A seam over `PresenceService` so the failure classification below can be
@@ -260,6 +262,17 @@ String describeRefusedChange(ss.SmartschoolPresenceChangeRefusedError error) {
 /// for the choice: sending it again is safe either way (see
 /// [classifyPresenceFailure]).
 ///
+/// A login Smartschool refused is the third failure the desk words (#464): a
+/// wrong or changed password, a second factor it did not get or did not
+/// accept, an account verification. The drain asks for these words when its
+/// re-sign-in fails (`Aanmelden bij Smartschool lukte niet: …`), and
+/// [classifyPresenceFailure] gives the same words to the expired session a
+/// refused login turns into, since that is the text a registration is given
+/// up with once the drain's re-sign-ins are spent. Trying again does not help
+/// here — only the operator can, by fixing the login — so the sentence names
+/// the cause ([describeRefusedSmartschoolSignIn]) and says where to fix and
+/// test it.
+///
 /// The library's own text follows on the next line, the shape
 /// `describeSmartschoolSignInFailure` gives a failed **Aanmelding testen**: the
 /// desk shows the first line and folds the rest away behind **Details**
@@ -267,18 +280,22 @@ String describeRefusedChange(ss.SmartschoolPresenceChangeRefusedError error) {
 /// whoever has to diagnose it. Anything else comes back as its own text, as
 /// before.
 String describePresenceFailure(Object error) {
-  final String? sentence = switch (error) {
-    ss.SmartschoolPresenceUnreadableAnswerError(:final int? statusCode) =>
-      'Smartschool gaf een antwoord dat niet gelezen kon worden'
-          '${statusCode == null ? '' : ' (HTTP $statusCode)'}. Meestal is '
-          'Smartschool dan even niet bereikbaar; probeer opnieuw zodra het '
-          'weer werkt.',
-    ss.SmartschoolConnectionError() =>
-      'Smartschool was niet bereikbaar vanaf deze computer. Probeer opnieuw '
-          'zodra de netwerkverbinding in orde is; lukt het dan nog niet, test '
-          'de aanmelding bij Instellingen → Te laat.',
-    _ => null,
-  };
+  final String? refusedLogin = describeRefusedSmartschoolSignIn(error);
+  final String? sentence = refusedLogin != null
+      ? '$refusedLogin Pas de aanmelding aan bij Instellingen → Te laat, test '
+          'ze met Aanmelding testen en probeer daarna opnieuw.'
+      : switch (error) {
+          ss.SmartschoolPresenceUnreadableAnswerError(:final int? statusCode) =>
+            'Smartschool gaf een antwoord dat niet gelezen kon worden'
+                '${statusCode == null ? '' : ' (HTTP $statusCode)'}. Meestal '
+                'is Smartschool dan even niet bereikbaar; probeer opnieuw '
+                'zodra het weer werkt.',
+          ss.SmartschoolConnectionError() =>
+            'Smartschool was niet bereikbaar vanaf deze computer. Probeer '
+                'opnieuw zodra de netwerkverbinding in orde is; lukt het dan '
+                'nog niet, test de aanmelding bij Instellingen → Te laat.',
+          _ => null,
+        };
   return sentence == null ? '$error' : '$sentence\n$error';
 }
 
@@ -302,7 +319,10 @@ ss.DayPart dayPartOf(HalfDay part) => switch (part) {
 ///   logins in a row failed and its cooldown is running (`dartschool#32`). The
 ///   drain's own re-authentication cap bounds how often this path is walked,
 ///   and `LiveSmartschoolPresenceSession.signIn` replaces the client, which
-///   starts the library's count afresh.
+///   starts the library's count afresh. A login Smartschool refused — the
+///   password, the second factor, the account verification — carries
+///   [describePresenceFailure]'s Dutch rather than the library's message
+///   (#464); every other expiry carries the library's message.
 /// - [PresenceRejected] — terminal at once, keeping the server's own wording so
 ///   the operator can tell an access right from a class registration. Every
 ///   other [ss.SmartschoolPresenceError]: a save the module refused
@@ -339,7 +359,19 @@ Object classifyPresenceFailure(Object error) {
     return error;
   }
   if (error is ss.SmartschoolAuthenticationError) {
-    return PresenceSessionExpired(error.message);
+    // A login Smartschool refused is an expiry too, so the drain signs in
+    // again within its capped budget, as it always did. Only its words are
+    // the operator's (#464): once the drain's re-sign-ins are spent, the next
+    // expiry's message is the text the registration is given up with, and
+    // the library's own ("Login failed. Check username/password …") would
+    // reach the desk's *mislukt* line in English. The library's text stays
+    // on the line below. A session Smartschool no longer accepts keeps the
+    // library's message, as does anything else here.
+    return PresenceSessionExpired(
+      describeRefusedSmartschoolSignIn(error) == null
+          ? error.message
+          : describePresenceFailure(error),
+    );
   }
   if (error is ss.SmartschoolPresenceUnreadableAnswerError) {
     // An answer the library could not read: empty, an HTML page where JSON
