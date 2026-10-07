@@ -313,7 +313,7 @@ const String smartschoolHostSuffix = '.smartschool.be';
 /// Smartschool login is a live interaction with the school's tenant, and the
 /// repo's live-testing policy keeps those out of CI entirely: every test binds a
 /// fake, and only the operator pressing the button drives
-/// [probeSmartschoolOperatorSignInLive].
+/// [probeSmartschoolOperatorSignInLive] against a real Smartschool.
 ///
 /// Throws on failure, with the library's own typed error — a wrong password and
 /// a missing second factor are different types, and the operator standing at
@@ -326,6 +326,19 @@ typedef SmartschoolSignInProbe = Future<void> Function(
   String host,
 );
 
+/// How a Smartschool client is made: the shape of `SmartschoolClient.create`,
+/// less the options left at their defaults.
+///
+/// Both places that sign the operator in take one —
+/// `LiveSmartschoolPresenceSession` (#469) and
+/// [probeSmartschoolOperatorSignInLive] (#470) — defaulting to the library's
+/// own, so a test can hand in a client it watches being disposed, without a
+/// Smartschool on the network.
+typedef SmartschoolClientFactory = Future<ss.SmartschoolClient> Function(
+  ss.Credentials credentials, {
+  String? cacheDir,
+});
+
 /// The real **Aanmelding testen**: one full login, then nothing.
 ///
 /// Deliberately the same call the drain's own re-authentication makes
@@ -333,12 +346,18 @@ typedef SmartschoolSignInProbe = Future<void> Function(
 /// reads no presence, writes no presence and touches no student. A typo in a
 /// password should be caught here, minutes before the first student is late,
 /// rather than discovered as a queue that will not drain.
+///
+/// The client it signs in with is used for nothing else, so it is closed
+/// before the probe returns, whether the login stood or not (#470).
+/// [createClient] makes it — the library's own `SmartschoolClient.create`
+/// unless a test hands in another.
 Future<void> probeSmartschoolOperatorSignInLive(
   SmartschoolOperatorLogin login,
   String host, {
   String? cacheDir,
+  SmartschoolClientFactory createClient = ss.SmartschoolClient.create,
 }) async {
-  final ss.SmartschoolClient client = await ss.SmartschoolClient.create(
+  final ss.SmartschoolClient client = await createClient(
     ss.AppCredentials(
       username: login.username.trim(),
       password: login.password,
@@ -347,7 +366,15 @@ Future<void> probeSmartschoolOperatorSignInLive(
     ),
     cacheDir: cacheDir,
   );
-  await client.ensureAuthenticated();
+  try {
+    await client.ensureAuthenticated();
+  } finally {
+    // Until #470 nothing closed it, so every press of the button left a
+    // client's HTTP connections open until they timed out. Closing it does
+    // not touch a failed login's error: that is passed on as the library
+    // threw it, which is what `describeSmartschoolSignInFailure` words.
+    await client.dispose();
+  }
 }
 
 /// What is wrong with a login Smartschool refused, in the operator's words —

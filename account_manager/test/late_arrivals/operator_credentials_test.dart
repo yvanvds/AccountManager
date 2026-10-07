@@ -2,7 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
+import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'fake_smartschool_client.dart';
 
 /// A reversible stand-in for DPAPI.
 ///
@@ -254,6 +257,101 @@ void main() {
       // `.smartschool.be`, which the desk would then try to sign in against.
       expect(smartschoolHostFrom(''), '');
       expect(smartschoolHostFrom('   '), '');
+    });
+  });
+
+  /// **Aanmelding testen** over a client the test makes (#470): the probe's
+  /// client is used for one login and nothing else, so it must be closed
+  /// whether that login stood or not — and a failed one's error must reach
+  /// the desk as the library threw it.
+  group('probeSmartschoolOperatorSignInLive (#470)', () {
+    const SmartschoolOperatorLogin login = SmartschoolOperatorLogin(
+      username: ' ann.peeters ',
+      password: 'geheim',
+      mfa: '  ',
+    );
+    const String host = 'arcadia.smartschool.be';
+
+    /// What the probe last asked its factory for.
+    ss.Credentials? credentialsAsked;
+    String? cacheDirAsked;
+
+    setUp(() {
+      credentialsAsked = null;
+      cacheDirAsked = null;
+    });
+
+    /// A factory that hands out [client] and notes what it was asked for.
+    SmartschoolClientFactory handing(FakeClient client) =>
+        (ss.Credentials credentials, {String? cacheDir}) async {
+          credentialsAsked = credentials;
+          cacheDirAsked = cacheDir;
+          return client;
+        };
+
+    test('a login that stands closes its client once it has signed in',
+        () async {
+      final FakeClient client = FakeClient();
+
+      await probeSmartschoolOperatorSignInLive(
+        login,
+        host,
+        cacheDir: 'C:/cache/ann.peeters',
+        createClient: handing(client),
+      );
+
+      expect(client.signIns, 1);
+      expect(client.disposals, 1);
+      expect(client.requests, 0, reason: 'a probe reads and writes nothing');
+      // The same login the probe always signed in with, now through the
+      // factory: the username trimmed, a blank MFA field as no second
+      // factor, and the session cache where the drain keeps its own.
+      final ss.Credentials credentials = credentialsAsked!;
+      expect(credentials.username, 'ann.peeters');
+      expect(credentials.password, 'geheim');
+      expect(credentials.mainUrl, host);
+      expect(credentials.mfa, isNull);
+      expect(cacheDirAsked, 'C:/cache/ann.peeters');
+    });
+
+    test(
+        'a login Smartschool refuses closes its client, and passes the '
+        "library's error on unchanged", () async {
+      const ss.SmartschoolInvalidCredentialsError refused =
+          ss.SmartschoolInvalidCredentialsError();
+      final FakeClient client = FakeClient(signInFailure: refused);
+
+      await expectLater(
+        probeSmartschoolOperatorSignInLive(
+          login,
+          host,
+          createClient: handing(client),
+        ),
+        throwsA(same(refused)),
+      );
+
+      expect(client.signIns, 1);
+      expect(client.disposals, 1);
+    });
+
+    test(
+        'a Smartschool that cannot be reached closes its client too, and '
+        "passes the library's error on unchanged", () async {
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError('Unable to reach Smartschool');
+      final FakeClient client = FakeClient(signInFailure: unreachable);
+
+      await expectLater(
+        probeSmartschoolOperatorSignInLive(
+          login,
+          host,
+          createClient: handing(client),
+        ),
+        throwsA(same(unreachable)),
+      );
+
+      expect(client.signIns, 1);
+      expect(client.disposals, 1);
     });
   });
 }

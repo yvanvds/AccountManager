@@ -16,6 +16,8 @@ import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 
+import 'fake_smartschool_client.dart';
+
 class FakeSession implements SmartschoolPresenceSession {
   FakeSession({
     this.failure,
@@ -1188,49 +1190,6 @@ class SocketException implements Exception {
 
   @override
   String toString() => 'SocketException: $message';
-}
-
-/// A `SmartschoolClient` that signs in, or fails to, the way it is told, and
-/// counts what was done to it (#469). It answers no request: every other
-/// member throws an [UnimplementedError], counted in [requests].
-class FakeClient implements ss.SmartschoolClient {
-  FakeClient({this.signInFailure});
-
-  /// Thrown by [ensureAuthenticated]; `null` signs in.
-  final Object? signInFailure;
-
-  int signIns = 0;
-  int cookieClears = 0;
-  int disposals = 0;
-  int requests = 0;
-
-  @override
-  bool get isDisposed => disposals > 0;
-
-  @override
-  Future<void> ensureAuthenticated() async {
-    signIns++;
-    final Object? error = signInFailure;
-    if (error != null) throw error;
-  }
-
-  @override
-  Future<void> clearCookies() async {
-    cookieClears++;
-  }
-
-  @override
-  Future<void> dispose({bool force = true}) async {
-    disposals++;
-  }
-
-  @override
-  Never noSuchMethod(Invocation invocation) {
-    requests++;
-    throw UnimplementedError(
-      'FakeClient does not answer ${invocation.memberName}',
-    );
-  }
 }
 
 /// The journal's sink, pointed at the drain once it exists: the drain needs

@@ -29,7 +29,8 @@ library;
 import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:late_arrivals/late_arrivals.dart';
 
-import 'operator_credentials.dart' show describeRefusedSmartschoolSignIn;
+import 'operator_credentials.dart'
+    show SmartschoolClientFactory, describeRefusedSmartschoolSignIn;
 
 /// The two things the drain needs from a signed-in Smartschool session.
 ///
@@ -58,13 +59,6 @@ abstract interface class SmartschoolPresenceSession {
   /// Drops the current session and signs in again.
   Future<void> signIn();
 }
-
-/// How [LiveSmartschoolPresenceSession] makes a client: the shape of
-/// `SmartschoolClient.create`, less the options it leaves at their defaults.
-typedef SmartschoolClientFactory = Future<ss.SmartschoolClient> Function(
-  ss.Credentials credentials, {
-  String? cacheDir,
-});
 
 /// The real session: one lazily-created [ss.SmartschoolClient] and the
 /// [ss.PresenceService] on top of it.
