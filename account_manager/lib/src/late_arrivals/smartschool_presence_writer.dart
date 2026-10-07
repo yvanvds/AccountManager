@@ -59,6 +59,13 @@ abstract interface class SmartschoolPresenceSession {
   Future<void> signIn();
 }
 
+/// How [LiveSmartschoolPresenceSession] makes a client: the shape of
+/// `SmartschoolClient.create`, less the options it leaves at their defaults.
+typedef SmartschoolClientFactory = Future<ss.SmartschoolClient> Function(
+  ss.Credentials credentials, {
+  String? cacheDir,
+});
+
 /// The real session: one lazily-created [ss.SmartschoolClient] and the
 /// [ss.PresenceService] on top of it.
 ///
@@ -69,6 +76,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
   LiveSmartschoolPresenceSession({
     required this.credentials,
     this.cacheDir,
+    this.createClient = ss.SmartschoolClient.create,
   });
 
   /// The operator's own Smartschool login — see the library note above.
@@ -78,6 +86,12 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
   /// (a per-username directory under the user's cache).
   final String? cacheDir;
 
+  /// Makes each client the session works with: the library's own
+  /// `SmartschoolClient.create`, unless a test hands in one that returns a
+  /// client it can watch being disposed, without a Smartschool on the network
+  /// (#469).
+  final SmartschoolClientFactory createClient;
+
   ss.SmartschoolClient? _client;
   ss.PresenceService? _presence;
 
@@ -85,7 +99,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
     final ss.PresenceService? held = _presence;
     if (held != null) return held;
     final ss.SmartschoolClient client =
-        await ss.SmartschoolClient.create(credentials, cacheDir: cacheDir);
+        await createClient(credentials, cacheDir: cacheDir);
     _client = client;
     return _presence = ss.PresenceService(client);
   }
@@ -133,8 +147,20 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
       await previous.dispose();
     }
     final ss.SmartschoolClient client =
-        await ss.SmartschoolClient.create(credentials, cacheDir: cacheDir);
-    await client.ensureAuthenticated();
+        await createClient(credentials, cacheDir: cacheDir);
+    try {
+      await client.ensureAuthenticated();
+    } on Object {
+      // Nothing holds this client once the error leaves here: `_client` stays
+      // null, and the next write makes a client of its own. Until #469 its
+      // HTTP connections stayed open until they timed out — one client per
+      // failed sign-in, so up to two per registration while Smartschool
+      // cannot be reached, and one per stand-down over a refused login.
+      // Closing it does not touch the error the drain acts on: it is passed
+      // on as the library threw it.
+      await client.dispose();
+      rethrow;
+    }
     _client = client;
     _presence = ss.PresenceService(client);
   }

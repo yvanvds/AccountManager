@@ -3,9 +3,10 @@
 /// The drain's whole retry policy is decided by *which* exception comes back
 /// out of a failed presence write, so the mapping from the library's exception
 /// types to the seam's three answers is the thing worth testing. Everything
-/// here runs against a fake session: `setLate` is a write against a live school
-/// tenant, and the repo's live-testing policy keeps write-capable verification
-/// out of CI and in the operator's hands.
+/// here runs against a fake session, or the live one over a fake client
+/// (#469): `setLate` is a write against a live school tenant, and the repo's
+/// live-testing policy keeps write-capable verification out of CI and in the
+/// operator's hands.
 library;
 
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart'
@@ -1064,6 +1065,117 @@ void main() {
       await SmartschoolPresenceWriter(session).reauthenticate();
       expect(session.signIns, 1);
     });
+
+    /// The live session itself, over clients a test makes (#469): a fresh
+    /// sign-in that fails must close the client it made for it, and pass the
+    /// error on as the library threw it.
+    group('on the live session', () {
+      /// A session whose clients come from [clients], in order, and the list
+      /// of the ones it has asked for so far.
+      (LiveSmartschoolPresenceSession, List<FakeClient>) liveSession(
+        List<FakeClient> clients,
+      ) {
+        final List<FakeClient> made = <FakeClient>[];
+        final LiveSmartschoolPresenceSession session =
+            LiveSmartschoolPresenceSession(
+          credentials: ss.AppCredentials(
+            username: 'onthaal',
+            password: 'geheim',
+            mainUrl: 'school.smartschool.be',
+          ),
+          createClient: (ss.Credentials credentials, {String? cacheDir}) async {
+            final FakeClient client = clients.removeAt(0);
+            made.add(client);
+            return client;
+          },
+        );
+        return (session, made);
+      }
+
+      test(
+          'a sign-in Smartschool cannot be reached for closes the client it '
+          'made, and passes the error on unchanged', () async {
+        const ss.SmartschoolConnectionError unreachable =
+            ss.SmartschoolConnectionError('Unable to reach Smartschool');
+        final (LiveSmartschoolPresenceSession session, List<FakeClient> made) =
+            liveSession(<FakeClient>[FakeClient(signInFailure: unreachable)]);
+
+        await expectLater(session.signIn(), throwsA(same(unreachable)));
+
+        expect(made, hasLength(1));
+        expect(made.single.signIns, 1);
+        expect(made.single.disposals, 1);
+      });
+
+      test(
+          'a sign-in Smartschool refuses closes the client it made, and the '
+          'writer still stands the drain down over it', () async {
+        final (LiveSmartschoolPresenceSession session, List<FakeClient> made) =
+            liveSession(<FakeClient>[
+          FakeClient(
+            signInFailure: const ss.SmartschoolInvalidCredentialsError(),
+          ),
+        ]);
+
+        await expectLater(
+          SmartschoolPresenceWriter(session).reauthenticate(),
+          throwsA(isA<PresenceCredentialsRefused>()),
+        );
+
+        expect(made.single.disposals, 1);
+      });
+
+      test(
+          'the next write after a failed sign-in makes a client of its own '
+          'instead of using the closed one', () async {
+        final (LiveSmartschoolPresenceSession session, List<FakeClient> made) =
+            liveSession(<FakeClient>[
+          FakeClient(
+            signInFailure: const ss.SmartschoolConnectionError('offline'),
+          ),
+          FakeClient(),
+        ]);
+        await expectLater(
+          session.signIn(),
+          throwsA(isA<ss.SmartschoolConnectionError>()),
+        );
+
+        // The fake answers no request, so the write fails on its first one;
+        // what matters is which client it went to.
+        await expectLater(
+          session.setLate(
+            userId: 11110,
+            classGroupId: 298,
+            date: DateTime(2026, 9, 7),
+            part: ss.DayPart.morning,
+            withoutValidReason: false,
+            motivation: '08:14 – Bus te laat',
+          ),
+          throwsA(isA<UnimplementedError>()),
+        );
+
+        expect(made, hasLength(2));
+        expect(made.last.requests, 1);
+        expect(made.last.disposals, 0);
+        expect(made.first.requests, 0);
+      });
+
+      test(
+          'a sign-in that succeeds keeps its client open until the next '
+          'sign-in replaces it', () async {
+        final (LiveSmartschoolPresenceSession session, List<FakeClient> made) =
+            liveSession(<FakeClient>[FakeClient(), FakeClient()]);
+
+        await session.signIn();
+        expect(made.single.disposals, 0);
+
+        await session.signIn();
+        expect(made, hasLength(2));
+        expect(made.first.cookieClears, 1);
+        expect(made.first.disposals, 1);
+        expect(made.last.disposals, 0);
+      });
+    });
   });
 }
 
@@ -1076,6 +1188,49 @@ class SocketException implements Exception {
 
   @override
   String toString() => 'SocketException: $message';
+}
+
+/// A `SmartschoolClient` that signs in, or fails to, the way it is told, and
+/// counts what was done to it (#469). It answers no request: every other
+/// member throws an [UnimplementedError], counted in [requests].
+class FakeClient implements ss.SmartschoolClient {
+  FakeClient({this.signInFailure});
+
+  /// Thrown by [ensureAuthenticated]; `null` signs in.
+  final Object? signInFailure;
+
+  int signIns = 0;
+  int cookieClears = 0;
+  int disposals = 0;
+  int requests = 0;
+
+  @override
+  bool get isDisposed => disposals > 0;
+
+  @override
+  Future<void> ensureAuthenticated() async {
+    signIns++;
+    final Object? error = signInFailure;
+    if (error != null) throw error;
+  }
+
+  @override
+  Future<void> clearCookies() async {
+    cookieClears++;
+  }
+
+  @override
+  Future<void> dispose({bool force = true}) async {
+    disposals++;
+  }
+
+  @override
+  Never noSuchMethod(Invocation invocation) {
+    requests++;
+    throw UnimplementedError(
+      'FakeClient does not answer ${invocation.memberName}',
+    );
+  }
 }
 
 /// The journal's sink, pointed at the drain once it exists: the drain needs
