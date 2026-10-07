@@ -872,7 +872,6 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   /// given up on.
   Widget _queuePanel(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme colors = Theme.of(context).colorScheme;
 
     final LateArrivalJournal? journal = _desk?.journal;
     final List<LateArrivalRecord> records =
@@ -885,6 +884,37 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     final List<LateArrivalRecord> failed =
         journal?.failures ?? const <LateArrivalRecord>[];
     final bool degraded = _drainStatus?.degraded ?? false;
+    // Stood down because Smartschool refused the login (#466): nothing goes
+    // out until the operator fixes it, not even on the next scan, so the line
+    // has to say what was refused. The writer's words, read as the mislukt
+    // lines read theirs (#463): its sentence on the line, the library's text
+    // behind Details.
+    final bool loginRefused = _drainStatus?.credentialsRefused ?? false;
+    final DeskWarning refusal = loginRefused
+        ? DeskWarning.fromText(_drainStatus?.lastError ?? '')
+        : const DeskWarning('');
+    final DeskWarning line = switch ((outstanding, failed.length, degraded)) {
+      (0, 0, _) => const DeskWarning('Alles is naar Smartschool verstuurd.'),
+      (_, _, true) when loginRefused => DeskWarning(
+          'Het versturen naar Smartschool is gestopt tot de aanmelding in orde '
+          'is.${refusal.message.isEmpty ? '' : ' ${refusal.message}'} Niets is '
+          'verloren — alles staat bewaard op deze computer.',
+          detail: refusal.detail,
+        ),
+      (_, _, true) => const DeskWarning(
+          'Het versturen naar Smartschool is gestopt na een reeks fouten. '
+          'Niets is verloren — alles staat bewaard op deze computer.',
+        ),
+      (_, 0, _) => const DeskWarning(
+          'Deze registraties worden op de achtergrond naar Smartschool '
+          'verstuurd.',
+        ),
+      _ => const DeskWarning(
+          'De mislukte registraties worden niet vanzelf opnieuw geprobeerd. '
+          'Probeer ze opnieuw, of voer ze zelf in Smartschool in en duid ze '
+          'aan als manueel ingevoerd.',
+        ),
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -910,21 +940,7 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
           ],
         ),
         const SizedBox(height: PlinkSpacing.s2),
-        Text(
-          switch ((outstanding, failed.length, degraded)) {
-            (0, 0, _) => 'Alles is naar Smartschool verstuurd.',
-            (_, _, true) =>
-              'Het versturen naar Smartschool is gestopt na een reeks fouten. '
-                  'Niets is verloren — alles staat bewaard op deze computer.',
-            (_, 0, _) => 'Deze registraties worden op de achtergrond naar '
-                'Smartschool verstuurd.',
-            _ => 'De mislukte registraties worden niet vanzelf opnieuw '
-                'geprobeerd. Probeer ze opnieuw, of voer ze zelf in '
-                'Smartschool in en duid ze aan als manueel ingevoerd.',
-          },
-          key: const ValueKey<String>('late-queue-line'),
-          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
-        ),
+        _QueueStatusLine(line),
         for (final LateArrivalRecord r in failed) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s2),
           _QueueFailureLine(
@@ -1391,6 +1407,73 @@ class _DeskNoteState extends State<_DeskNote> {
             ),
         ],
       ),
+    );
+  }
+}
+
+/// The queue panel's one line on where the queue stands, with the machine's
+/// own words — when there are any — behind **Details**.
+///
+/// Only a drain that stood down over a refused login has any (#466): the line
+/// then names what Smartschool refused, in the writer's Dutch, and the
+/// library's text is one click away, as it is on a *mislukt* line (#463).
+class _QueueStatusLine extends StatefulWidget {
+  const _QueueStatusLine(this.line);
+
+  final DeskWarning line;
+
+  @override
+  State<_QueueStatusLine> createState() => _QueueStatusLineState();
+}
+
+class _QueueStatusLineState extends State<_QueueStatusLine> {
+  bool _open = false;
+
+  @override
+  void didUpdateWidget(_QueueStatusLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The queue moved on, or was refused for another reason: fold the old
+    // words away rather than leave them open under a line they no longer
+    // explain.
+    if (_open && widget.line.detail != oldWidget.line.detail) _open = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final DeskWarning line = widget.line;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                line.message,
+                key: const ValueKey<String>('late-queue-line'),
+                style:
+                    text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ),
+            if (line.hasDetail) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s2),
+              TextButton(
+                key: const ValueKey<String>('late-queue-line-details'),
+                onPressed: () => setState(() => _open = !_open),
+                child: Text(_open ? 'Verberg details' : 'Details'),
+              ),
+            ],
+          ],
+        ),
+        if (line.hasDetail && _open)
+          _RawDetail(
+            line.detail,
+            textKey: const ValueKey<String>('late-queue-line-detail'),
+          ),
+      ],
     );
   }
 }

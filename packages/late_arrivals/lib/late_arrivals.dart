@@ -57,7 +57,11 @@ library;
 export 'src/drain/late_arrival_drain.dart'
     show LateArrivalDrain, LateArrivalDrainStatus;
 export 'src/drain/presence_writer.dart'
-    show LatePresenceWriter, PresenceRejected, PresenceSessionExpired;
+    show
+        LatePresenceWriter,
+        PresenceCredentialsRefused,
+        PresenceRejected,
+        PresenceSessionExpired;
 export 'src/journal/half_day.dart' show HalfDay;
 export 'src/journal/journal_store.dart'
     show

@@ -22,6 +22,7 @@ final class LateArrivalDrainStatus {
     required this.consecutiveFailures,
     required this.draining,
     required this.degraded,
+    required this.credentialsRefused,
     this.lastError,
     this.lastSuccessAt,
   });
@@ -44,7 +45,9 @@ final class LateArrivalDrainStatus {
   final bool draining;
 
   /// Whether the worker has stood down after a run of failures and is waiting
-  /// for a fresh registration, a [LateArrivalDrain.retryNow], or a restart.
+  /// for a fresh registration, a [LateArrivalDrain.retryNow], or a restart —
+  /// or, when Smartschool refused the login ([credentialsRefused]), for the
+  /// operator alone.
   ///
   /// **Nothing is lost while this is true.** Every record it stood down over is
   /// still `pending` in the journal on disk; standing down is what stops a
@@ -53,9 +56,23 @@ final class LateArrivalDrainStatus {
   /// later.
   final bool degraded;
 
+  /// Whether the worker stood down because Smartschool refused the login
+  /// itself — the password, the second factor, the account verification
+  /// (#466). [degraded] is true as well, and [lastError] says what was
+  /// refused, in the writer's words.
+  ///
+  /// Unlike any other stand-down, a fresh registration does **not** pick the
+  /// queue back up. It would sign in with the same credentials on every scan,
+  /// Smartschool would refuse every one of them, and every refused login
+  /// brings the operator's own account closer to being locked. Only the
+  /// operator picks it up: **Opnieuw proberen** ([LateArrivalDrain.retryNow]),
+  /// or a changed login, for which the desk builds a new worker.
+  final bool credentialsRefused;
+
   /// The last failure, in words an operator can be shown — the
   /// [LateArrivalDrain.describeFailure]'s, for a failure the worker retries
-  /// (#463). `null` after a success.
+  /// (#463), and the writer's own for a refused login (#466). `null` after a
+  /// success.
   final String? lastError;
 
   /// When Smartschool last accepted a write.
@@ -69,7 +86,8 @@ final class LateArrivalDrainStatus {
 
   @override
   String toString() => 'LateArrivalDrainStatus($outstanding te versturen, '
-      '$failed mislukt${degraded ? ', opgegeven' : ''})';
+      '$failed mislukt${degraded ? ', opgegeven' : ''}'
+      '${credentialsRefused ? ', aanmelding geweigerd' : ''})';
 }
 
 /// Drains journalled late arrivals to Smartschool presences (#404).
@@ -101,12 +119,24 @@ final class LateArrivalDrainStatus {
 /// the error text on it and stays in the journal, visible, rather than
 /// vanishing. For a failure it retried, that text is [describeFailure]'s.
 ///
+/// **A refused login is neither retried nor held against the record.** When
+/// Smartschool refuses the login itself ([PresenceCredentialsRefused]: the
+/// password, the second factor, the account verification), signing in again
+/// would send the same credentials to be refused again, and every refused login
+/// brings the operator's own account closer to being locked (#466). So the
+/// worker stands down at once — no fresh sign-in, no backoff, no attempt
+/// spent, no record failed — and stays down until the operator acts:
+/// [retryNow], or a changed login, for which the desk builds a new worker.
+/// [LateArrivalDrainStatus.credentialsRefused] says so, with the writer's words
+/// for what was refused in [LateArrivalDrainStatus.lastError].
+///
 /// **It stands down rather than draining into failures.** When a record
 /// exhausts its budget against a transient fault the worker stops, marks itself
 /// [LateArrivalDrainStatus.degraded], and leaves everything behind that record
 /// `pending`. That is what keeps a ten-minute Smartschool outage from turning
 /// forty registrations into forty permanent failures. The next scan, an
-/// explicit [retryNow] or the next app start picks the queue straight back up.
+/// explicit [retryNow] or the next app start picks the queue straight back up
+/// — the next scan only when it was not a refused login that stood it down.
 ///
 /// ```dart
 /// final drain = LateArrivalDrain(journal: journal, writer: writer, log: log);
@@ -162,10 +192,11 @@ class LateArrivalDrain implements LateArrivalRecordSink {
   ///
   /// Asked for every failure the worker retries, and for a sign-in that
   /// failed. Not for a [PresenceRejected], whose message already is the
-  /// server's answer, nor for a [PresenceSessionExpired], which carries its
-  /// own. It changes the words only: which failures are retried, how often
-  /// and how long apart is the writer's classification, [maxAttempts] and
-  /// [backoff], exactly as without it.
+  /// server's answer, nor for a [PresenceSessionExpired] or a
+  /// [PresenceCredentialsRefused], which carry their own. It changes the words
+  /// only: which failures are retried, how often and how long apart is the
+  /// writer's classification, [maxAttempts] and [backoff], exactly as without
+  /// it.
   ///
   /// The text may run over several lines. Keep the library's own text on a
   /// later line rather than dropping it — the desk shows the first line and
@@ -197,6 +228,7 @@ class LateArrivalDrain implements LateArrivalRecordSink {
   bool _pumping = false;
   bool _closed = false;
   bool _degraded = false;
+  bool _credentialsRefused = false;
   bool _inFlight = false;
   int _consecutiveFailures = 0;
   String? _lastError;
@@ -214,6 +246,7 @@ class LateArrivalDrain implements LateArrivalRecordSink {
         consecutiveFailures: _consecutiveFailures,
         draining: _inFlight,
         degraded: _degraded,
+        credentialsRefused: _credentialsRefused,
         lastError: _lastError,
         lastSuccessAt: _lastSuccessAt,
       );
@@ -254,6 +287,15 @@ class LateArrivalDrain implements LateArrivalRecordSink {
       _emit();
       return;
     }
+    // Not after a refused login (#466): the login is the same one, so the
+    // answer would be too, and each refused login brings the operator's
+    // account closer to being locked. The registration waits in the queue
+    // with the others until the operator fixes the login or presses Opnieuw
+    // proberen.
+    if (_credentialsRefused) {
+      _emit();
+      return;
+    }
     // A fresh registration is also the signal to try again after a stand-down:
     // Smartschool may well be back.
     _degraded = false;
@@ -269,9 +311,15 @@ class LateArrivalDrain implements LateArrivalRecordSink {
   /// — [LateArrivalStatus.failed] is terminal for the drain — so the
   /// operator's **Opnieuw proberen** first requeues those through
   /// [LateArrivalJournal.requeueFailures] and then calls this (#460).
+  ///
+  /// It is also the one thing besides a new worker that signs in again after
+  /// Smartschool refused the login ([LateArrivalDrainStatus.credentialsRefused],
+  /// #466): it is the operator's own call, made once, never a scan's. Refused
+  /// again, it stands down again after that one login.
   void retryNow() {
     if (_closed) return;
     _degraded = false;
+    _credentialsRefused = false;
     _consecutiveFailures = 0;
     _lastError = null;
     _emit();
@@ -353,6 +401,10 @@ class LateArrivalDrain implements LateArrivalRecordSink {
         // The server's answer will not change; keep its wording and move on.
         await _giveUp(id, record, error.message);
         return;
+      } on PresenceCredentialsRefused catch (refused) {
+        // Not this registration's fault, and not one to sign in again for.
+        await _standDownOnRefusedLogin(id, refused);
+        return;
       } on Object catch (error) {
         _inFlight = false;
         final bool expired = error is PresenceSessionExpired;
@@ -369,6 +421,11 @@ class LateArrivalDrain implements LateArrivalRecordSink {
             // A fresh session is a new situation, not another strike: retry
             // straight away and leave the record's budget untouched.
             continue;
+          } on PresenceCredentialsRefused catch (refused) {
+            // The fresh sign-in was refused: a second one would send the same
+            // credentials (#466).
+            await _standDownOnRefusedLogin(id, refused);
+            return;
           } on Object catch (signInError) {
             lastError = 'Aanmelden bij Smartschool lukte niet: '
                 '${_describe(signInError)}';
@@ -418,6 +475,33 @@ class LateArrivalDrain implements LateArrivalRecordSink {
       core.Origin.smartschool,
       'De te-laatregistratie van ${record.displayName} (${record.className}) '
       'kon niet naar Smartschool geschreven worden: $error',
+    );
+  }
+
+  /// Stands the worker down because Smartschool refused the login (#466).
+  ///
+  /// The record goes back to `pending`, where everything behind it already
+  /// is, and nothing is spent: not an attempt, not a backoff, not a fresh
+  /// sign-in. The worker then waits for the operator — see
+  /// [LateArrivalDrainStatus.credentialsRefused].
+  Future<void> _standDownOnRefusedLogin(
+    String id,
+    PresenceCredentialsRefused refused,
+  ) async {
+    if (_journal.byId(id)?.status != LateArrivalStatus.pending) {
+      await _journal.markPending(id);
+    }
+    _inFlight = false;
+    _consecutiveFailures++;
+    _lastError = refused.message;
+    _degraded = true;
+    _credentialsRefused = true;
+    _emit();
+    _log?.addError(
+      core.Origin.smartschool,
+      'Te-laatregistraties worden niet naar Smartschool verstuurd tot de '
+      'aanmelding in orde is (${_journal.pending.length} in wachtrij): '
+      '${refused.message}',
     );
   }
 

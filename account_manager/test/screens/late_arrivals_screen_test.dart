@@ -1206,6 +1206,166 @@ void main() {
     });
   });
 
+  group('a refused login holds the queue, and the line says why (#466)', () {
+    /// What the presence writer raises when Smartschool refused the stored
+    /// password: the operator's sentence, then the library's own text.
+    const PresenceCredentialsRefused refused = PresenceCredentialsRefused(
+      'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet. Pas '
+      'de aanmelding aan bij Instellingen → Te laat, test ze met Aanmelding '
+      'testen en probeer daarna opnieuw.\n'
+      'SmartschoolInvalidCredentialsError: Login failed. Check '
+      'username/password or SSO-only account setup.',
+    );
+    final Finder line = find.byKey(const ValueKey<String>('late-queue-line'));
+    final Finder details =
+        find.byKey(const ValueKey<String>('late-queue-line-details'));
+    final Finder detail =
+        find.byKey(const ValueKey<String>('late-queue-line-detail'));
+
+    testWidgets(
+        'nothing is mislukt, the line names what was refused with the '
+        'library\'s text behind Details, and a new scan sends nothing',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final _ScriptedWriter writer = _ScriptedWriter()
+        ..failures.addAll(<Object>[refused, refused]);
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: InMemoryJournalStore(),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'oud-geheim',
+          ),
+        ),
+        deskId: 'test-balie',
+        settings: LiveSettings(_withSmartschoolSite()),
+        writerFor: (_, __) => writer,
+      );
+      await desk.start();
+      addTearDown(desk.dispose);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      await _scan(tester, '123456');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+
+      expect(writer.calls, 1);
+      expect(desk.journal!.records.single.status, LateArrivalStatus.pending);
+      expect(find.byKey(const ValueKey<String>('late-queue-failed')),
+          findsNothing);
+      expect(find.text('1 IN WACHTRIJ'), findsOneWidget);
+      expect(
+        _textOf(tester, line),
+        'Het versturen naar Smartschool is gestopt tot de aanmelding in orde '
+        'is. Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet. '
+        'Pas de aanmelding aan bij Instellingen → Te laat, test ze met '
+        'Aanmelding testen en probeer daarna opnieuw. Niets is verloren — '
+        'alles staat bewaard op deze computer.',
+      );
+      expect(
+        find.byKey(const ValueKey<String>('late-queue-retry')),
+        findsOneWidget,
+      );
+
+      // The library's words, one click away and folded again on the next.
+      expect(detail, findsNothing);
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail).data,
+        'SmartschoolInvalidCredentialsError: Login failed. Check '
+        'username/password or SSO-only account setup.',
+      );
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(detail, findsNothing);
+
+      // Lea is late too. She is queued — and nothing is sent for her with the
+      // login Smartschool just refused.
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Lea Janssens');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+      expect(writer.calls, 1);
+      expect(find.text('2 IN WACHTRIJ'), findsOneWidget);
+      expect(
+          _textOf(tester, line),
+          startsWith('Het versturen naar Smartschool '
+              'is gestopt tot de aanmelding in orde is.'));
+    });
+
+    testWidgets(
+        'an outage that stood the drain down says so without Details, as '
+        'before', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final _ScriptedWriter writer = _ScriptedWriter()
+        ..failures.addAll(<Object>[
+          for (int i = 0; i < 5; i++)
+            StateError('Smartschool is even weg.\nDetails van de fout.'),
+        ]);
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: InMemoryJournalStore(),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'geheim',
+          ),
+        ),
+        deskId: 'test-balie',
+        settings: LiveSettings(_withSmartschoolSite()),
+        writerFor: (_, __) => writer,
+        drainBackoff:
+            const RetryBackoff(base: Duration.zero, max: Duration.zero),
+      );
+      await desk.start();
+      addTearDown(desk.dispose);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      // Two registrations: the outage gives the first up and stands down over
+      // the second.
+      for (final ScannedStudent student in <ScannedStudent>[
+        _jonas,
+        const ScannedStudent(
+          scanCode: '223344',
+          wisaId: '223344',
+          smartschoolUid: 'lea.janssens',
+          displayName: 'Lea Janssens',
+          className: '3MTa',
+          internalUserId: 12017,
+          classGroupId: 77,
+        ),
+      ]) {
+        await desk.journal!.register(
+          scan: ScanRegisterable(student),
+          scannedAt: DateTime(2026, 9, 7, 8, 42),
+          reasonLabel: 'Bus te laat',
+          reasonIsValid: true,
+        );
+      }
+      await tester.pumpAndSettle();
+
+      expect(writer.calls, 5);
+      expect(desk.drain!.status.degraded, isTrue);
+      expect(desk.drain!.status.credentialsRefused, isFalse);
+      expect(
+        _textOf(tester, line),
+        'Het versturen naar Smartschool is gestopt na een reeks fouten. '
+        'Niets is verloren — alles staat bewaard op deze computer.',
+      );
+      expect(details, findsNothing);
+    });
+  });
+
   testWidgets('a desk with no printer says so and still registers',
       (WidgetTester tester) async {
     // An empty shared list (#435) is a configuration, not a gap — no ticket
@@ -1718,6 +1878,9 @@ class _ScriptedWriter implements LatePresenceWriter {
   final List<Object> failures = <Object>[];
   final List<int> written = <int>[];
 
+  /// Every write asked for, refused or not (#466).
+  int calls = 0;
+
   @override
   Future<void> setLate({
     required int userId,
@@ -1728,6 +1891,7 @@ class _ScriptedWriter implements LatePresenceWriter {
     required String motivation,
     bool keepRecordedAbsence = false,
   }) async {
+    calls++;
     if (failures.isNotEmpty) throw failures.removeAt(0);
     written.add(userId);
   }

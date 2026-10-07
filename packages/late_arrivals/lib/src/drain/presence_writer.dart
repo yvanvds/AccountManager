@@ -28,6 +28,11 @@ abstract interface class LatePresenceWriter {
   /// - [PresenceSessionExpired] — the login is no longer good. The drain calls
   ///   [reauthenticate] and tries again; it is never a reason to give up on a
   ///   registration.
+  /// - [PresenceCredentialsRefused] — Smartschool refused the login itself:
+  ///   the password, the second factor, the account verification (#466). The
+  ///   drain stands down at once and does not sign in again with the same
+  ///   credentials; nothing about the registration is wrong, so it stays
+  ///   queued.
   /// - [PresenceRejected] — the server (or the client-side precondition check)
   ///   said no, and saying it again will not change the answer: the account has
   ///   no presence rights for the class, the pupil is not in it, the code does
@@ -58,9 +63,11 @@ abstract interface class LatePresenceWriter {
 
   /// Signs in again after a [PresenceSessionExpired].
   ///
-  /// Throws when the credentials themselves are the problem — which the drain
-  /// then handles as an ordinary transient failure, so a wrong password ends up
-  /// visible on the record instead of spinning forever.
+  /// Throws [PresenceCredentialsRefused] when Smartschool refused the login
+  /// itself, and the drain stands down exactly as it does when [setLate]
+  /// throws one (#466). Anything else it throws — a Smartschool that could not
+  /// be reached — the drain handles as an ordinary transient failure, so it
+  /// ends up visible on the record instead of spinning forever.
   Future<void> reauthenticate();
 }
 
@@ -71,6 +78,31 @@ abstract interface class LatePresenceWriter {
 /// against the record's retry budget.
 final class PresenceSessionExpired implements Exception {
   const PresenceSessionExpired(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// Smartschool refused the login itself: the password, the second factor or
+/// the account verification did not get past it (#466).
+///
+/// Distinct from [PresenceSessionExpired] because its remedy is not the
+/// drain's to apply. Signing in again would send the same credentials, which
+/// Smartschool refuses again, and every refused login brings the operator's
+/// own account closer to being locked. So the drain does not sign in again,
+/// and it does not count this against the record either: nothing about the
+/// registration is wrong. It stands down at once, leaves the record and
+/// everything behind it `pending` on disk, and waits for the operator — a
+/// changed login, for which the desk builds a new drain, or **Opnieuw
+/// proberen**. A new scan does not wake it.
+///
+/// [message] is what the operator is shown, as it stands: the writer words
+/// it, because only the writer knows which library sits behind it and what
+/// that library's refusals mean.
+final class PresenceCredentialsRefused implements Exception {
+  const PresenceCredentialsRefused(this.message);
 
   final String message;
 

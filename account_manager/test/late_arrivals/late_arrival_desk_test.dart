@@ -19,6 +19,10 @@ class _RecordingWriter implements LatePresenceWriter {
   final List<int> written = <int>[];
   int signIns = 0;
 
+  /// Every write asked for, refused or not — for a login Smartschool refused,
+  /// the number of times the drain logged in with it (#466).
+  int calls = 0;
+
   /// Thrown, one per call and in order, before anything is recorded as
   /// written — a Smartschool that refuses the next writes (#460).
   final List<Object> failures = <Object>[];
@@ -33,6 +37,7 @@ class _RecordingWriter implements LatePresenceWriter {
     required String motivation,
     bool keepRecordedAbsence = false,
   }) async {
+    calls++;
     if (failures.isNotEmpty) throw failures.removeAt(0);
     written.add(userId);
   }
@@ -492,6 +497,128 @@ void main() {
         throwsA(isA<StateError>()),
       );
       expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.pending);
+      desk.dispose();
+    });
+  });
+
+  group('a login Smartschool refused (#466)', () {
+    const ScannedStudent lea = ScannedStudent(
+      scanCode: '223344',
+      wisaId: '223344',
+      smartschoolUid: 'lea.janssens',
+      displayName: 'Lea Janssens',
+      className: '3MTa',
+      internalUserId: 4243,
+      classGroupId: 77,
+    );
+
+    test(
+        'holds the queue through new scans and unrelated settings, and only a '
+        'changed login sends it', () async {
+      // One writer per login, as the desk builds them: Smartschool refuses the
+      // stored password on every write, and takes the corrected one.
+      const PresenceCredentialsRefused refused = PresenceCredentialsRefused(
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.\n'
+        'SmartschoolInvalidCredentialsError: Login failed.',
+      );
+      final Map<String, _RecordingWriter> writers =
+          <String, _RecordingWriter>{};
+      final settings = LiveSettings(_withSite('arcadia.smartschool.be'));
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: settings,
+        writerFor: (SmartschoolOperatorLogin built, _) {
+          final _RecordingWriter writer = _RecordingWriter();
+          if (built.password == login.password) {
+            writer.failures
+                .addAll(<Object>[for (int i = 0; i < 20; i++) refused]);
+          }
+          return writers[built.password] = writer;
+        },
+      );
+      await desk.start();
+      final _RecordingWriter stale = writers[login.password]!;
+
+      final jonas = await register(desk);
+      await desk.drain!.settle();
+      expect(stale.calls, 1);
+      expect(stale.signIns, 0);
+      expect(desk.drain!.status.credentialsRefused, isTrue);
+      expect(desk.journal!.byId(jonas.id)!.status, LateArrivalStatus.pending);
+      expect(desk.journal!.failures, isEmpty);
+
+      // Lea is late too: queued, and nobody logs in for her.
+      final leaRecord = await desk.journal!.register(
+        scan: const ScanRegisterable(lea),
+        scannedAt: DateTime(2026, 9, 7, 8, 50),
+        reasonLabel: 'Bus te laat',
+        reasonIsValid: true,
+      );
+      await desk.drain!.settle();
+      expect(stale.calls, 1);
+
+      // A settings change that leaves the login and the site alone keeps the
+      // same drain, stood down, rather than starting over with the same
+      // credentials.
+      final LateArrivalDrain stoodDown = desk.drain!;
+      settings.publish(
+        _withSite('arcadia.smartschool.be').copyWith(schoolPrefix: 'SMA'),
+      );
+      await _settle();
+      expect(desk.drain, same(stoodDown));
+      expect(stale.calls, 1);
+      expect(desk.drain!.status.credentialsRefused, isTrue);
+
+      // The operator corrects the password in Instellingen.
+      await desk.saveLogin(
+        const SmartschoolOperatorLogin(
+          username: 'ann.peeters',
+          password: 'nieuw-geheim',
+        ),
+      );
+      await desk.drain!.settle();
+
+      expect(writers['nieuw-geheim']!.written, <int>[4242, 4243]);
+      expect(desk.journal!.byId(jonas.id)!.status, LateArrivalStatus.confirmed);
+      expect(
+        desk.journal!.byId(leaRecord.id)!.status,
+        LateArrivalStatus.confirmed,
+      );
+      expect(desk.drain!.status.credentialsRefused, isFalse);
+      expect(stale.calls, 1, reason: 'never again with the refused password');
+      desk.dispose();
+    });
+
+    test('Opnieuw proberen logs in once more with the same login', () async {
+      const PresenceCredentialsRefused refused =
+          PresenceCredentialsRefused('Het wachtwoord klopt niet.');
+      final writer = _RecordingWriter()
+        ..failures.addAll(<Object>[refused, refused]);
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        writerFor: (_, __) => writer,
+      );
+      await desk.start();
+      final record = await register(desk);
+      await desk.drain!.settle();
+      expect(writer.calls, 1);
+
+      // Still refused: one more login, and down again.
+      await desk.retryNow();
+      await desk.drain!.settle();
+      expect(writer.calls, 2);
+      expect(desk.drain!.status.credentialsRefused, isTrue);
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.pending);
+
+      // Fixed in Smartschool in the meantime: it goes out.
+      await desk.retryNow();
+      await desk.drain!.settle();
+      expect(writer.written, <int>[4242]);
+      expect(
+        desk.journal!.byId(record.id)!.status,
+        LateArrivalStatus.confirmed,
+      );
       desk.dispose();
     });
   });

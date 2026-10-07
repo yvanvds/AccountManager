@@ -494,6 +494,9 @@ void main() {
     test('an already-classified failure is passed through unchanged', () {
       const PresenceRejected rejected = PresenceRejected('nee');
       expect(classifyPresenceFailure(rejected), same(rejected));
+      const PresenceCredentialsRefused refused =
+          PresenceCredentialsRefused('Het wachtwoord klopt niet.');
+      expect(classifyPresenceFailure(refused), same(refused));
     });
   });
 
@@ -826,19 +829,59 @@ void main() {
     });
 
     test(
-        'a refused login is still an expired session — the drain signs in '
-        'again — and it carries the operator\'s words', () async {
+        'a refused login on a write tells the drain to stand down, not to sign '
+        'in again, and it carries the operator\'s words (#466)', () async {
       for (final (ss.SmartschoolAuthenticationError error, _) in refusals) {
+        final FakeSession session = FakeSession(failure: error);
         await expectLater(
-          write(SmartschoolPresenceWriter(FakeSession(failure: error))),
+          write(SmartschoolPresenceWriter(session)),
           throwsA(
-            isA<PresenceSessionExpired>().having(
-              (PresenceSessionExpired e) => e.message,
+            isA<PresenceCredentialsRefused>().having(
+              (PresenceCredentialsRefused e) => e.message,
               'message',
               describePresenceFailure(error),
             ),
           ),
           reason: '${error.runtimeType}',
+        );
+        expect(session.signIns, 0, reason: '${error.runtimeType}');
+      }
+    });
+
+    test(
+        'a refused fresh sign-in tells the drain the same, in the same words '
+        '(#466)', () async {
+      for (final (ss.SmartschoolAuthenticationError error, _) in refusals) {
+        final FakeSession session = FakeSession(signInFailure: error);
+        await expectLater(
+          SmartschoolPresenceWriter(session).reauthenticate(),
+          throwsA(
+            isA<PresenceCredentialsRefused>().having(
+              (PresenceCredentialsRefused e) => e.message,
+              'message',
+              describePresenceFailure(error),
+            ),
+          ),
+          reason: '${error.runtimeType}',
+        );
+        expect(session.signIns, 1, reason: '${error.runtimeType}');
+      }
+    });
+
+    test(
+        'any other sign-in failure is passed on as the library threw it, for '
+        'the drain to retry', () async {
+      for (final Object error in <Object>[
+        const ss.SmartschoolConnectionError('Unable to reach Smartschool'),
+        const ss.SmartschoolSessionExpiredError(),
+        const ss.SmartschoolAuthenticationError('Unable to validate session'),
+        StateError('SmartschoolClient was disposed'),
+      ]) {
+        await expectLater(
+          SmartschoolPresenceWriter(FakeSession(signInFailure: error))
+              .reauthenticate(),
+          throwsA(same(error)),
+          reason: '$error',
         );
       }
     });
@@ -861,34 +904,23 @@ void main() {
       );
     });
 
-    group('through the real drain over the real writer', () {
+    group('through the real drain over the real writer (#466)', () {
       final DateTime monday = DateTime(2026, 9, 7, 8, 14);
 
-      Future<(LateArrivalJournal, LateArrivalRecord)> journalWithJonas() async {
-        final LateArrivalJournal journal =
-            await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
-        final LateArrivalRecord record = await journal.register(
-          scan: const ScanRegisterable(jonas),
-          scannedAt: monday,
-          reasonLabel: 'Bus te laat',
-          reasonIsValid: true,
+      /// A journal with the real drain behind its sink, over the real writer
+      /// on [session] — the way the desk wires it, so a new scan wakes the
+      /// drain exactly as it does in the app. The drain's own defaults: five
+      /// attempts, two fresh sign-ins.
+      Future<(LateArrivalJournal, LateArrivalDrain)> wired(
+        FakeSession session, {
+        required List<Duration> waits,
+      }) async {
+        final _DrainSink sink = _DrainSink();
+        final LateArrivalJournal journal = await LateArrivalJournal.open(
+          InMemoryJournalStore(),
+          now: monday,
+          sink: sink,
         );
-        return (journal, record);
-      }
-
-      test(
-          'a changed password: the registration is given up on after the same '
-          'attempts and re-sign-ins, naming the password', () async {
-        // What the live session does once the password changed: every write
-        // makes the client log in on its own and is refused, and so is every
-        // fresh sign-in the drain asks for.
-        const ss.SmartschoolInvalidCredentialsError refused =
-            ss.SmartschoolInvalidCredentialsError();
-        final (LateArrivalJournal journal, LateArrivalRecord record) =
-            await journalWithJonas();
-        final FakeSession session =
-            FakeSession(failure: refused, signInFailure: refused);
-        final List<Duration> waits = <Duration>[];
         final LateArrivalDrain drain = LateArrivalDrain(
           journal: journal,
           writer: SmartschoolPresenceWriter(session),
@@ -896,73 +928,131 @@ void main() {
           sleep: (Duration d) async => waits.add(d),
           describeFailure: describePresenceFailure,
         );
+        sink.drain = drain;
+        return (journal, drain);
+      }
 
+      Future<LateArrivalRecord> register(
+        LateArrivalJournal journal,
+        ScannedStudent student,
+      ) =>
+          journal.register(
+            scan: ScanRegisterable(student),
+            scannedAt: monday,
+            reasonLabel: 'Bus te laat',
+            reasonIsValid: true,
+          );
+
+      test(
+          'a changed password: one login, then the drain stands down with the '
+          'registration still queued, and the next scan does not log in again',
+          () async {
+        // What the live session does once the password changed: every write
+        // makes the client log in, and Smartschool refuses it; so would every
+        // fresh sign-in. Until #466 that was five writes and two fresh
+        // sign-ins — seven refused logins — and the registration given up on.
+        const ss.SmartschoolInvalidCredentialsError refused =
+            ss.SmartschoolInvalidCredentialsError();
+        final FakeSession session =
+            FakeSession(failure: refused, signInFailure: refused);
+        final List<Duration> waits = <Duration>[];
+        final (LateArrivalJournal journal, LateArrivalDrain drain) =
+            await wired(session, waits: waits);
         drain.start();
+
+        final LateArrivalRecord jonasRecord = await register(journal, jonas);
         await drain.settle();
 
-        // The drain's defaults, untouched: five attempts, two re-sign-ins,
-        // the same backoff between them.
-        expect(session.calls, 5);
-        expect(session.signIns, 2);
-        expect(waits, const <Duration>[
-          Duration(seconds: 2),
-          Duration(seconds: 4),
-          Duration(seconds: 8),
-          Duration(seconds: 16),
-        ]);
+        expect(session.calls, 1);
+        expect(session.signIns, 0);
+        expect(waits, isEmpty);
+        expect(journal.byId(jonasRecord.id)!.status, LateArrivalStatus.pending);
+        expect(journal.failures, isEmpty);
         expect(drain.status.degraded, isTrue);
+        expect(drain.status.credentialsRefused, isTrue);
 
-        final LateArrivalRecord failed = journal.byId(record.id)!;
-        expect(failed.status, LateArrivalStatus.failed);
-        final (String sentence, String detail) = linesOf(failed.error!);
+        // What the desk shows while it waits: the cause, where to fix it, and
+        // the library's own text on the line below.
+        final (String sentence, String detail) =
+            linesOf(drain.status.lastError!);
         expect(
           sentence,
           'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet. '
           '$fixIt',
         );
         expect(detail, '$refused');
+
+        // Lea is late too. Her registration waits with Jonas's; nobody logs
+        // in with the refused password for her.
+        final LateArrivalRecord leaRecord = await register(journal, lea);
+        await drain.settle();
+        expect(session.calls, 1);
+        expect(session.signIns, 0);
+        expect(journal.byId(leaRecord.id)!.status, LateArrivalStatus.pending);
+        expect(drain.status.outstanding, 2);
         await drain.close();
       });
 
       test(
-          'a re-sign-in that is refused on the last attempt keeps the drain\'s '
-          'own lead-in, and names the second factor', () async {
+          'a fresh sign-in refused on the second factor: one sign-in, then the '
+          'drain stands down, naming the second factor', () async {
         // A session Smartschool stopped accepting, and a login whose second
-        // factor it then rejects: here the last thing that failed is the
-        // drain's own re-sign-in, so its words are the ones the record keeps.
+        // factor it then rejects. A second fresh sign-in would send the same
+        // secret.
         const ss.SmartschoolTwoFactorRejectedError rejected =
             ss.SmartschoolTwoFactorRejectedError();
-        final (LateArrivalJournal journal, LateArrivalRecord record) =
-            await journalWithJonas();
         final FakeSession session = FakeSession(
           failure: const ss.SmartschoolSessionExpiredError(),
           signInFailure: rejected,
         );
-        final LateArrivalDrain drain = LateArrivalDrain(
-          journal: journal,
-          writer: SmartschoolPresenceWriter(session),
-          maxAttempts: 2,
-          clock: () => monday,
-          sleep: (Duration d) async {},
-          describeFailure: describePresenceFailure,
-        );
-
+        final List<Duration> waits = <Duration>[];
+        final (LateArrivalJournal journal, LateArrivalDrain drain) =
+            await wired(session, waits: waits);
         drain.start();
+
+        final LateArrivalRecord record = await register(journal, jonas);
+        await drain.settle();
+
+        expect(session.calls, 1);
+        expect(session.signIns, 1);
+        expect(waits, isEmpty);
+        expect(journal.byId(record.id)!.status, LateArrivalStatus.pending);
+        expect(journal.failures, isEmpty);
+        expect(drain.status.credentialsRefused, isTrue);
+        final (String sentence, String detail) =
+            linesOf(drain.status.lastError!);
+        expect(
+          sentence,
+          'Smartschool aanvaardde de code van de tweestapsverificatie niet. '
+          'Kijk de geheime sleutel van de authenticator (MFA) na, en of de '
+          'klok van deze computer juist staat. $fixIt',
+        );
+        expect(detail, '$rejected');
+        await drain.close();
+      });
+
+      test(
+          'a session Smartschool no longer accepts is still signed in again, '
+          'and the write goes through', () async {
+        // The other authentication error: the remedy is a fresh sign-in, and
+        // nothing about #466 changes that.
+        final FakeSession session = FakeSession(
+          failures: <Object>[const ss.SmartschoolSessionExpiredError()],
+        );
+        final (LateArrivalJournal journal, LateArrivalDrain drain) =
+            await wired(session, waits: <Duration>[]);
+        drain.start();
+
+        final LateArrivalRecord record = await register(journal, jonas);
         await drain.settle();
 
         expect(session.calls, 2);
-        expect(session.signIns, 2);
-        final LateArrivalRecord failed = journal.byId(record.id)!;
-        expect(failed.status, LateArrivalStatus.failed);
-        final (String sentence, String detail) = linesOf(failed.error!);
+        expect(session.signIns, 1);
         expect(
-          sentence,
-          'Aanmelden bij Smartschool lukte niet: Smartschool aanvaardde de '
-          'code van de tweestapsverificatie niet. Kijk de geheime sleutel van '
-          'de authenticator (MFA) na, en of de klok van deze computer juist '
-          'staat. $fixIt',
+          journal.byId(record.id)!.status,
+          LateArrivalStatus.confirmed,
         );
-        expect(detail, '$rejected');
+        expect(drain.status.credentialsRefused, isFalse);
         await drain.close();
       });
     });
@@ -986,4 +1076,13 @@ class SocketException implements Exception {
 
   @override
   String toString() => 'SocketException: $message';
+}
+
+/// The journal's sink, pointed at the drain once it exists: the drain needs
+/// the journal, and the journal wants the drain.
+class _DrainSink implements LateArrivalRecordSink {
+  LateArrivalDrain? drain;
+
+  @override
+  void onRecord(LateArrivalRecord record) => drain?.onRecord(record);
 }

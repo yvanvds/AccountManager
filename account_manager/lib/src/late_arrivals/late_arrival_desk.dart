@@ -541,7 +541,10 @@ class LateArrivalDesk extends ChangeNotifier {
 
     _drainWarning = '';
     // Same login, same host, worker already running: leave it be. Rebuilding
-    // here would drop a session mid-queue every time anybody saved anything.
+    // here would drop a session mid-queue every time anybody saved anything —
+    // and would undo a stand-down over a refused login (#466), signing in with
+    // the same credentials again for a change that did not touch them. A
+    // changed login does rebuild it, and that is what sends the queue it held.
     if (_drain != null && identical(_drainLogin, login) && _drainHost == host) {
       return;
     }

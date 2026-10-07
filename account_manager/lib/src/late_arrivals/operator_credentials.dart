@@ -367,10 +367,15 @@ Future<void> probeSmartschoolOperatorSignInLive(
 /// ([ss.SmartschoolSessionExpiredError]) is not a refused login, and neither is
 /// anything else; those return `null`.
 ///
-/// The drain's describer (`describePresenceFailure`) puts this on a
-/// registration's *mislukt* line. **Aanmelding testen** does not use it yet: a
-/// refusal there still comes back in the library's own words (see
-/// [describeSmartschoolSignInFailure], #467).
+/// It is also the test for "Smartschool refused the login" itself: a non-null
+/// answer is what makes the presence writer stand the drain down instead of
+/// signing in with the same credentials again (#466). Its seven types are the
+/// library's own `_rejectsCredentials`.
+///
+/// `describePresenceFailure` puts this on the desk's queue panel while the
+/// drain is stood down over a refused login. **Aanmelding testen** does not
+/// use it yet: a refusal there still comes back in the library's own words
+/// (see [describeSmartschoolSignInFailure], #467).
 String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
       ss.SmartschoolInvalidCredentialsError() =>
         'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
@@ -407,8 +412,8 @@ String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
 /// hands. A login Smartschool *refused* — a wrong password, a missing second
 /// factor, a code it did not accept — comes back in the library's own words,
 /// unchanged: those messages already tell the three apart, and the operator is
-/// the one to fix them. (A registration the drain gave up on over the same
-/// refusal says it in Dutch, [describeRefusedSmartschoolSignIn], #464.) A
+/// the one to fix them. (The drain, which stands down over the same refusal,
+/// says it in Dutch, [describeRefusedSmartschoolSignIn], #464, #466.) A
 /// [ss.SmartschoolConnectionError] is the other kind:
 /// Smartschool was never reached, so nothing was sent — not the username, not
 /// the password, not the MFA — and no amount of retyping them helps. Until the

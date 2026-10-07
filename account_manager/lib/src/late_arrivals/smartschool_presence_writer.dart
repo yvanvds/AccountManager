@@ -19,10 +19,11 @@
 /// into a shared account.
 ///
 /// **Classification is the interesting part.** Which failures are worth
-/// retrying, which mean "sign in again", and which are the server saying no and
-/// meaning it — see [SmartschoolPresenceWriter.setLate]. Everything below the
-/// seam is one call; everything above it depends on getting that answer right,
-/// which is why [SmartschoolPresenceSession] exists and is faked in the tests.
+/// retrying, which mean "sign in again", which mean "stop signing in, the
+/// login itself was refused", and which are the server saying no and meaning
+/// it — see [classifyPresenceFailure]. Everything below the seam is one call;
+/// everything above it depends on getting that answer right, which is why
+/// [SmartschoolPresenceSession] exists and is faked in the tests.
 library;
 
 import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
@@ -119,7 +120,11 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
     // HTTP connections (0.3.x). The new one starts the library's own count of
     // failed logins (three in a row, then a cooldown, dartschool#32) from
     // zero, so it is the drain's capped re-authentication budget that bounds
-    // the retries, not the library's.
+    // the retries, not the library's. That count also stops a client from
+    // logging in again after Smartschool refused its credentials, and a new
+    // client would not know; so a refused login must never lead here. It
+    // does not: the writer answers it with a `PresenceCredentialsRefused`,
+    // and the drain stands down instead of asking for a fresh sign-in (#466).
     final ss.SmartschoolClient? previous = _client;
     _client = null;
     _presence = null;
@@ -137,7 +142,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
 
 /// Writes journalled late arrivals to Smartschool for the drain (#404).
 ///
-/// Everything it does is translate: one presence call down, and one of three
+/// Everything it does is translate: one presence call down, and one of four
 /// answers back up. The drain's whole retry policy hangs off which answer it
 /// gets, so the mapping is the contract.
 class SmartschoolPresenceWriter implements LatePresenceWriter {
@@ -193,8 +198,23 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
     }
   }
 
+  /// Signs in again, through [session].
+  ///
+  /// A login Smartschool refused — the password, the second factor, the
+  /// account verification — comes back as a [PresenceCredentialsRefused] in
+  /// [describePresenceFailure]'s words, the answer [classifyPresenceFailure]
+  /// gives the same refusal on a write, so the drain stands down instead of
+  /// signing in with them again (#466). Anything else is passed on as the
+  /// library threw it, for the drain to retry.
   @override
-  Future<void> reauthenticate() => session.signIn();
+  Future<void> reauthenticate() async {
+    try {
+      await session.signIn();
+    } on Object catch (error) {
+      if (describeRefusedSmartschoolSignIn(error) == null) rethrow;
+      throw PresenceCredentialsRefused(describePresenceFailure(error));
+    }
+  }
 }
 
 /// What the write of a registration the operator requeued may overwrite
@@ -264,14 +284,14 @@ String describeRefusedChange(ss.SmartschoolPresenceChangeRefusedError error) {
 ///
 /// A login Smartschool refused is the third failure the desk words (#464): a
 /// wrong or changed password, a second factor it did not get or did not
-/// accept, an account verification. The drain asks for these words when its
-/// re-sign-in fails (`Aanmelden bij Smartschool lukte niet: …`), and
-/// [classifyPresenceFailure] gives the same words to the expired session a
-/// refused login turns into, since that is the text a registration is given
-/// up with once the drain's re-sign-ins are spent. Trying again does not help
-/// here — only the operator can, by fixing the login — so the sentence names
-/// the cause ([describeRefusedSmartschoolSignIn]) and says where to fix and
-/// test it.
+/// accept, an account verification. The drain does not retry these and does
+/// not give a registration up over them (#466): [classifyPresenceFailure] and
+/// [SmartschoolPresenceWriter.reauthenticate] put these words in the
+/// [PresenceCredentialsRefused] the drain stands down with, and the desk's
+/// queue panel shows them for as long as it stays down. Trying again does not
+/// help here — only the operator can, by fixing the login — so the sentence
+/// names the cause ([describeRefusedSmartschoolSignIn]) and says where to fix
+/// and test it.
 ///
 /// The library's own text follows on the next line, the shape
 /// `describeSmartschoolSignInFailure` gives a failed **Aanmelding testen**: the
@@ -309,20 +329,29 @@ ss.DayPart dayPartOf(HalfDay part) => switch (part) {
 
 /// Turns a `flutter_smartschool` failure into the answer the drain acts on.
 ///
-/// Three outcomes, and the drain does something different with each:
+/// Four outcomes, and the drain does something different with each:
 ///
+/// - [PresenceCredentialsRefused] — stand down at once, without signing in
+///   again, without spending an attempt and without giving the registration
+///   up (#466). A login Smartschool refused: the authentication errors the
+///   library itself counts as rejected credentials and stops logging in after
+///   until `SmartschoolClient.resetLoginAttempts` (its `_rejectsCredentials`,
+///   dartschool#32) — the password, the second factor, the account
+///   verification, as [describeRefusedSmartschoolSignIn] names them. Signing
+///   in again would send the same credentials, and every refused login brings
+///   the operator's account closer to being locked. It carries
+///   [describePresenceFailure]'s Dutch (#464), with the library's text on the
+///   line below.
 /// - [PresenceSessionExpired] — sign in again and retry, no strike against the
-///   record. Every [ss.SmartschoolAuthenticationError], which includes the
-///   typed [ss.SmartschoolSessionExpiredError] the Presence module raises when
-///   Smartschool answers a request with its login chain (`yvanvds/dartschool#5`)
-///   — and also what the library raises, *without* logging in, once three
-///   logins in a row failed and its cooldown is running (`dartschool#32`). The
-///   drain's own re-authentication cap bounds how often this path is walked,
-///   and `LiveSmartschoolPresenceSession.signIn` replaces the client, which
-///   starts the library's count afresh. A login Smartschool refused — the
-///   password, the second factor, the account verification — carries
-///   [describePresenceFailure]'s Dutch rather than the library's message
-///   (#464); every other expiry carries the library's message.
+///   record. Every other [ss.SmartschoolAuthenticationError], which includes
+///   the typed [ss.SmartschoolSessionExpiredError] the Presence module raises
+///   when Smartschool answers a request with its login chain
+///   (`yvanvds/dartschool#5`) — and also what the library raises, *without*
+///   logging in, once three logins in a row failed and its cooldown is running
+///   (`dartschool#32`). The drain's own re-authentication cap bounds how often
+///   this path is walked, and `LiveSmartschoolPresenceSession.signIn` replaces
+///   the client, which starts the library's count afresh. It carries the
+///   library's message.
 /// - [PresenceRejected] — terminal at once, keeping the server's own wording so
 ///   the operator can tell an access right from a class registration. Every
 ///   other [ss.SmartschoolPresenceError]: a save the module refused
@@ -350,7 +379,9 @@ ss.DayPart dayPartOf(HalfDay part) => switch (part) {
 /// answer it cannot read has had a type of its own since dartschool#137, so
 /// this function still never reads a message.
 Object classifyPresenceFailure(Object error) {
-  if (error is PresenceSessionExpired || error is PresenceRejected) {
+  if (error is PresenceSessionExpired ||
+      error is PresenceRejected ||
+      error is PresenceCredentialsRefused) {
     return error;
   }
   if (error is ss.SmartschoolConnectionError) {
@@ -359,19 +390,18 @@ Object classifyPresenceFailure(Object error) {
     return error;
   }
   if (error is ss.SmartschoolAuthenticationError) {
-    // A login Smartschool refused is an expiry too, so the drain signs in
-    // again within its capped budget, as it always did. Only its words are
-    // the operator's (#464): once the drain's re-sign-ins are spent, the next
-    // expiry's message is the text the registration is given up with, and
-    // the library's own ("Login failed. Check username/password …") would
-    // reach the desk's *mislukt* line in English. The library's text stays
-    // on the line below. A session Smartschool no longer accepts keeps the
-    // library's message, as does anything else here.
-    return PresenceSessionExpired(
-      describeRefusedSmartschoolSignIn(error) == null
-          ? error.message
-          : describePresenceFailure(error),
-    );
+    if (describeRefusedSmartschoolSignIn(error) != null) {
+      // A login Smartschool refused. Until #466 this was an expiry like any
+      // other, and the drain spent two fresh sign-ins and five writes on it —
+      // seven refused logins per registration, and as many again on the next
+      // scan. Now the drain stands down on the first, in the operator's words
+      // (#464), with the library's ("Login failed. Check username/password
+      // …") on the line below.
+      return PresenceCredentialsRefused(describePresenceFailure(error));
+    }
+    // A session Smartschool no longer accepts, or anything else here: signing
+    // in again is the remedy, in the library's own words.
+    return PresenceSessionExpired(error.message);
   }
   if (error is ss.SmartschoolPresenceUnreadableAnswerError) {
     // An answer the library could not read: empty, an HTML page where JSON
