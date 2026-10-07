@@ -3001,6 +3001,7 @@ class _NeverWriter implements LatePresenceWriter {
     required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
+    bool keepRecordedAbsence = false,
   }) async =>
       throw StateError('nothing should be queued here');
 

@@ -74,6 +74,16 @@ wrong:
   line naming the same id. Nothing is ever rewritten in place, so a crash can
   only damage the tail — and `open` discards a torn trailing line rather than the
   day. `JournalRecovery` reports what had to be dropped instead of hiding it.
+- **Only the operator walks a record out of `failed`** ([#460][460]). Giving up
+  is the drain's decision and `canTransitionTo` keeps it final for the drain.
+  The desk has two ways out, each an ordinary status line a reload replays:
+  `requeueFailed(id)` / `requeueFailures()` — **Opnieuw proberen** — puts it back
+  in the queue, marked `requeuedByOperator` so its write may not overwrite an
+  absence recorded since; `markHandledManually(id)` — **Manueel ingevoerd** —
+  ends it as `handled-manually`, never sent and never deleted. `failures` is the
+  desk's *mislukt* list: a failure a later scan of the same student and
+  half-day superseded is left off it, and is never requeued, because sending it
+  again could only overwrite that scan.
 - **Ordering per student is strict.** A presence save *updates* the half-day cell
   rather than appending a row, so a student scanned twice must have the later
   scan applied last, or the desk's correction is silently undone. `pending` and
@@ -269,3 +279,4 @@ dart test packages/late_arrivals/test
 [429]: https://github.com/yvanvds/AccountManager/issues/429
 [430]: https://github.com/yvanvds/AccountManager/issues/430
 [435]: https://github.com/yvanvds/AccountManager/issues/435
+[460]: https://github.com/yvanvds/AccountManager/issues/460

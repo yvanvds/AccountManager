@@ -149,7 +149,17 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   /// Why the last confirmation could not be written, or empty.
   String _registerError = '';
 
+  /// Why the last action on the *Nog te versturen* list — **Opnieuw
+  /// proberen**, **Manueel ingevoerd** — could not be written, or empty
+  /// (#460). Cleared by the next one.
+  String _queueError = '';
+
   bool _confirming = false;
+
+  /// Whether the **Manueel ingevoerd** confirmation is open (#460). Like
+  /// [_picking], it holds the keyboard reclaim off while it is: see
+  /// [_reclaimFocus].
+  bool _dialogOpen = false;
 
   ReconcileServices? _services;
   Object? _error;
@@ -423,18 +433,22 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   /// and from [didChangeDependencies], neither of which may re-enter the focus
   /// manager mid-walk.
   ///
-  /// [_picking] is the one thing that holds it off, and only for as long as the
-  /// printer menu is open (#436): that menu is a route of its own, above this
+  /// [_picking] and [_dialogOpen] are the only things that hold it off, and
+  /// only for as long as the printer menu (#436) or the **Manueel ingevoerd**
+  /// confirmation (#460) is open: each is a route of its own, above this
   /// screen, and a reclaim firing into it would yank the keyboard out from
-  /// under a menu the operator is still reading. It is handed back the instant
-  /// the menu closes, picked or dismissed — see [_printerSelector].
+  /// under something the operator is still reading. It is handed back the
+  /// instant it closes, whichever way — see [_printerSelector] and
+  /// [_confirmHandledManually].
   void _reclaimFocus() {
-    if (!mounted || !_visible || _picking || _scanner.hasFocus) return;
+    if (!mounted || !_visible || _holdingOff || _scanner.hasFocus) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_visible || _picking || _scanner.hasFocus) return;
+      if (!mounted || !_visible || _holdingOff || _scanner.hasFocus) return;
       _scanner.requestFocus();
     });
   }
+
+  bool get _holdingOff => _picking || _dialogOpen;
 
   // ---------------------------------------------------------------------------
   // The scan
@@ -860,14 +874,16 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;
 
+    final LateArrivalJournal? journal = _desk?.journal;
     final List<LateArrivalRecord> records =
-        _desk?.journal?.records ?? const <LateArrivalRecord>[];
+        journal?.records ?? const <LateArrivalRecord>[];
     final int outstanding =
         records.where((LateArrivalRecord r) => r.status.needsDraining).length;
-    final List<LateArrivalRecord> failed = <LateArrivalRecord>[
-      for (final LateArrivalRecord r in records)
-        if (r.status == LateArrivalStatus.failed) r,
-    ];
+    // The journal's own list (#460): no record settled by hand, and none a
+    // later scan of the same student superseded — so every line here is one
+    // **Opnieuw proberen** really sends again.
+    final List<LateArrivalRecord> failed =
+        journal?.failures ?? const <LateArrivalRecord>[];
     final bool degraded = _drainStatus?.degraded ?? false;
 
     return Column(
@@ -903,30 +919,140 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
             (_, 0, _) => 'Deze registraties worden op de achtergrond naar '
                 'Smartschool verstuurd.',
             _ => 'De mislukte registraties worden niet vanzelf opnieuw '
-                'geprobeerd.',
+                'geprobeerd. Probeer ze opnieuw, of voer ze zelf in '
+                'Smartschool in en duid ze aan als manueel ingevoerd.',
           },
           key: const ValueKey<String>('late-queue-line'),
           style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
         ),
         for (final LateArrivalRecord r in failed) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s2),
-          Text(
-            '${r.displayName}, ${r.className} — ${r.error ?? 'onbekende fout'}',
-            key: ValueKey<String>('late-queue-failure-${r.id}'),
-            style: text.bodySmall,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  '${r.displayName}, ${r.className} — '
+                  '${r.error ?? 'onbekende fout'}',
+                  key: ValueKey<String>('late-queue-failure-${r.id}'),
+                  style: text.bodySmall,
+                ),
+              ),
+              const SizedBox(width: PlinkSpacing.s3),
+              // Per line, never in bulk (#460): each press is the operator's
+              // own statement that *this* student is in Smartschool.
+              TextButton(
+                key: ValueKey<String>('late-queue-handled-${r.id}'),
+                onPressed: () => unawaited(_confirmHandledManually(r)),
+                child: const Text('Manueel ingevoerd'),
+              ),
+            ],
           ),
         ],
         if (degraded || failed.isNotEmpty) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s3),
           OutlinedButton.icon(
             key: const ValueKey<String>('late-queue-retry'),
-            onPressed: _desk?.retryNow,
+            onPressed: _desk == null ? null : () => unawaited(_retry()),
             icon: const Icon(Icons.refresh_outlined),
             label: const Text('Opnieuw proberen'),
           ),
         ],
+        if (_queueError.isNotEmpty) ...<Widget>[
+          const SizedBox(height: PlinkSpacing.s3),
+          _alert(
+            context,
+            const ValueKey<String>('late-queue-error'),
+            _queueError,
+          ),
+        ],
       ],
     );
+  }
+
+  /// **Opnieuw proberen**: requeues every failed registration on the list and
+  /// picks the queue back up (#460).
+  Future<void> _retry() async {
+    final LateArrivalDesk? desk = _desk;
+    if (desk == null) return;
+    setState(() => _queueError = '');
+    String error = '';
+    try {
+      await desk.retryNow();
+    } on Object catch (e) {
+      error = 'Niet alle mislukte registraties konden opnieuw in de wachtrij '
+          'gezet worden ($e). Wat nog als mislukt staat, wordt niet verstuurd.';
+    }
+    if (!mounted) return;
+    setState(() {
+      _queueError = error;
+      _drainStatus = _desk?.drain?.status;
+    });
+    _reclaimFocus();
+  }
+
+  /// **Manueel ingevoerd** on one failed line (#460): asks first, and only on
+  /// a yes takes the registration off the list for good.
+  ///
+  /// The question says what the answer costs. The registration will not be
+  /// sent to Smartschool any more, so a yes is the operator's word that it is
+  /// in there already, entered by hand. A no — or a click beside the dialog,
+  /// or Escape — changes nothing at all.
+  Future<void> _confirmHandledManually(LateArrivalRecord record) async {
+    final LateArrivalDesk? desk = _desk;
+    if (desk == null || _dialogOpen) return;
+    _dialogOpen = true;
+    bool? confirmed;
+    try {
+      confirmed = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          key: const ValueKey<String>('late-handled-dialog'),
+          title: const Text('Manueel ingevoerd?'),
+          content: Text(
+            'De te-laatregistratie van ${record.displayName} '
+            '(${record.className}) wordt niet naar Smartschool verstuurd. '
+            'Bevestig alleen als je ze zelf in Smartschool hebt ingevoerd. Ze '
+            'verdwijnt dan uit de mislukte registraties, maar blijft op deze '
+            'computer bewaard.',
+            key: const ValueKey<String>('late-handled-message'),
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: const ValueKey<String>('late-handled-cancel'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Annuleren'),
+            ),
+            FilledButton(
+              key: const ValueKey<String>('late-handled-confirm'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Manueel ingevoerd'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _dialogOpen = false;
+    }
+    if (!mounted) return;
+    if (!(confirmed ?? false)) {
+      _reclaimFocus();
+      return;
+    }
+
+    String error = '';
+    try {
+      await desk.markHandledManually(record.id);
+    } on Object catch (e) {
+      error = 'De registratie van ${record.displayName} kon niet als '
+          'manueel ingevoerd bewaard worden ($e). Ze staat nog als mislukt.';
+    }
+    if (!mounted) return;
+    setState(() {
+      _queueError = error;
+      _drainStatus = _desk?.drain?.status;
+    });
+    _reclaimFocus();
   }
 
   /// The things that are not wrong with *this* scan but are wrong with the desk:

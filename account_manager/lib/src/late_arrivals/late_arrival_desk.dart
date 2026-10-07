@@ -367,11 +367,44 @@ class LateArrivalDesk extends ChangeNotifier {
     }
   }
 
-  /// Picks the queue back up after the drain stood down — the operator's
-  /// "opnieuw proberen", and also what a re-reconciliation is worth.
-  void retryNow() {
-    _drain?.retryNow();
-    _mirror?.retryNow();
+  /// The operator's **Opnieuw proberen**: puts every failed registration back
+  /// in the queue, then picks the queue back up after the drain stood down —
+  /// and the mirror's too, which is what a re-reconciliation is worth.
+  ///
+  /// The requeue is the half that used to be missing (#460): the drain only
+  /// ever sends what is queued, and a registration it gave up on is not, so
+  /// the button did nothing for the records it was shown for. A failure a
+  /// later scan of the same student superseded is left alone
+  /// ([LateArrivalJournal.failures]) — sending it again could only overwrite
+  /// that scan.
+  ///
+  /// Requeued with no drain attached (no login, no site yet), the records wait
+  /// in the queue and go out once one is. Throws when a requeue could not be
+  /// written to disk; whatever was written before it stands.
+  Future<void> retryNow() async {
+    try {
+      await _journal?.requeueFailures();
+    } finally {
+      _drain?.retryNow();
+      _mirror?.retryNow();
+      if (!_closed) notifyListeners();
+    }
+  }
+
+  /// Takes the failed registration [id] off the desk's list, because the
+  /// operator entered it in Smartschool by hand (#460). It is never sent, and
+  /// it stays in the journal as handled by hand.
+  ///
+  /// Throws when the journal is not open, when [id] is not a failed
+  /// registration, or when the line could not be written to disk — in every
+  /// case the record is exactly as it was.
+  Future<void> markHandledManually(String id) async {
+    final LateArrivalJournal? journal = _journal;
+    if (journal == null) {
+      throw StateError('De te-laatregistraties zijn niet geopend.');
+    }
+    await journal.markHandledManually(id);
+    if (!_closed) notifyListeners();
   }
 
   @override

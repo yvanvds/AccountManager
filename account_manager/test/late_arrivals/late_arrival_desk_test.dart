@@ -19,6 +19,10 @@ class _RecordingWriter implements LatePresenceWriter {
   final List<int> written = <int>[];
   int signIns = 0;
 
+  /// Thrown, one per call and in order, before anything is recorded as
+  /// written — a Smartschool that refuses the next writes (#460).
+  final List<Object> failures = <Object>[];
+
   @override
   Future<void> setLate({
     required int userId,
@@ -27,7 +31,9 @@ class _RecordingWriter implements LatePresenceWriter {
     required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
+    bool keepRecordedAbsence = false,
   }) async {
+    if (failures.isNotEmpty) throw failures.removeAt(0);
     written.add(userId);
   }
 
@@ -326,6 +332,97 @@ void main() {
 
       await desk.drain!.settle();
       expect(writer.written, <int>[4242]);
+      desk.dispose();
+    });
+  });
+
+  group('Opnieuw proberen and Manueel ingevoerd (#460)', () {
+    test('Opnieuw proberen sends a failed registration again', () async {
+      final writer = _RecordingWriter()
+        ..failures.add(const PresenceRejected(
+            'Empty response from /Presence/Main/getConfig.'));
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        writerFor: (_, __) => writer,
+      );
+      await desk.start();
+      final record = await register(desk);
+      await desk.drain!.settle();
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.failed);
+      expect(desk.drain!.status.failed, 1);
+
+      int notified = 0;
+      desk.addListener(() => notified++);
+      await desk.retryNow();
+      await desk.drain!.settle();
+
+      expect(writer.written, <int>[4242]);
+      expect(
+          desk.journal!.byId(record.id)!.status, LateArrivalStatus.confirmed);
+      expect(desk.drain!.status.failed, 0);
+      expect(notified, greaterThan(0), reason: 'the screen redraws its list');
+      desk.dispose();
+    });
+
+    test(
+        'with no drain attached, a requeued registration waits in the queue '
+        'for one', () async {
+      final desk = deskWith();
+      await desk.start();
+      final record = await register(desk);
+      await desk.journal!.markSent(record.id);
+      await desk.journal!.markFailed(record.id, 'geen rechten');
+
+      await desk.retryNow();
+
+      expect(desk.draining, isFalse);
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.pending);
+      expect(desk.journal!.failures, isEmpty);
+      desk.dispose();
+    });
+
+    test(
+        'Manueel ingevoerd takes a failed registration off the list and keeps '
+        'it in the journal', () async {
+      final desk = deskWith();
+      await desk.start();
+      final record = await register(desk);
+      await desk.journal!.markSent(record.id);
+      await desk.journal!.markFailed(record.id, 'geen rechten');
+
+      int notified = 0;
+      desk.addListener(() => notified++);
+      await desk.markHandledManually(record.id);
+
+      expect(desk.journal!.failures, isEmpty);
+      expect(
+        desk.journal!.byId(record.id)!.status,
+        LateArrivalStatus.handledManually,
+      );
+      expect(desk.journal!.records, hasLength(1));
+      expect(notified, 1);
+
+      // Settled for good: Opnieuw proberen leaves it alone.
+      await desk.retryNow();
+      expect(
+        desk.journal!.byId(record.id)!.status,
+        LateArrivalStatus.handledManually,
+      );
+      desk.dispose();
+    });
+
+    test('Manueel ingevoerd is refused for a registration that did not fail',
+        () async {
+      final desk = deskWith();
+      await desk.start();
+      final record = await register(desk);
+
+      await expectLater(
+        desk.markHandledManually(record.id),
+        throwsA(isA<StateError>()),
+      );
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.pending);
       desk.dispose();
     });
   });

@@ -166,6 +166,61 @@ void main() {
       expect(store.entries.single.record.status, LateArrivalStatus.confirmed);
     });
 
+    test(
+        'the operator\'s retry and "manueel ingevoerd" reach the shared copy, '
+        'so another desk sees the registration as handled (#460)', () async {
+      final InMemoryLateArrivalMirrorStore store =
+          InMemoryLateArrivalMirrorStore();
+      final LateArrivalMirror mirror = mirrorOn(store);
+      final LateArrivalJournal journal = await LateArrivalJournal.open(
+        InMemoryJournalStore(),
+        now: monday,
+        sink: mirror,
+      );
+
+      final LateArrivalRecord record = await register(
+        journal,
+        scanOf('jane.doe'),
+      );
+      await journal.markSent(record.id);
+      await journal.markFailed(record.id, 'geen rechten');
+      await mirror.drain();
+      expect(store.entries.single.record.status, LateArrivalStatus.failed);
+
+      // Opnieuw proberen: back in the queue, marked as the operator's retry.
+      await journal.requeueFailed(record.id);
+      await mirror.drain();
+      expect(store.entries.single.record.status, LateArrivalStatus.pending);
+      expect(store.entries.single.record.requeuedByOperator, isTrue);
+
+      // Refused again, then entered by hand.
+      await journal.markSent(record.id);
+      await journal.markFailed(record.id, 'In Smartschool staat al "Ziek".');
+      await journal.markHandledManually(record.id);
+      await mirror.drain();
+
+      final MirroredRegistration mirrored = store.entries.single;
+      expect(store.entries, hasLength(1));
+      expect(mirrored.record.status, LateArrivalStatus.handledManually);
+      // As the Cosmos document carries it, and as another desk reads it back.
+      final Map<String, Object?> document = mirrored.toDocument();
+      expect(document['status'], 'handled-manually');
+      final MirroredRegistration? readBack =
+          MirroredRegistration.tryFromDocument(document);
+      expect(readBack?.record.status, LateArrivalStatus.handledManually);
+      expect(readBack?.record.error, 'In Smartschool staat al "Ziek".');
+
+      // The other desk's stand-in queue does not count it as work to pick up.
+      final LateArrivalMirror otherDesk = mirrorOn(store, desk: 'onthaal-2');
+      final LateArrivalReconciliation found = await otherDesk.reconcile(
+        day: mondayDay,
+        local: const <LateArrivalRecord>[],
+      );
+      expect(found.missingLocally.single.record.status,
+          LateArrivalStatus.handledManually);
+      expect(found.outstanding, isEmpty);
+    });
+
     test('changes made while a write is in flight coalesce', () async {
       final BlockingMirrorStore store = BlockingMirrorStore();
       final LateArrivalMirror mirror = mirrorOn(store);

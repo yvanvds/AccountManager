@@ -38,6 +38,14 @@ abstract interface class LatePresenceWriter {
   /// Repeat calls for the same student and half-day **update** the existing
   /// cell rather than appending to it, which is why the drain is careful to
   /// send a student's registrations in scan order.
+  ///
+  /// [keepRecordedAbsence] guards that overwrite (#460). When `true`, the
+  /// write may only replace a half-day that holds nothing, a presence or a
+  /// late arrival; one that holds anything else — an absence the secretariat
+  /// recorded since — is left alone, nothing is written, and the call throws
+  /// [PresenceRejected] naming what the half-day holds. The drain sets it for
+  /// a record the operator requeued, whose write can come hours after the
+  /// scan. A first send leaves it `false` and overwrites, as it always did.
   Future<void> setLate({
     required int userId,
     required int classGroupId,
@@ -45,6 +53,7 @@ abstract interface class LatePresenceWriter {
     required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
+    bool keepRecordedAbsence = false,
   });
 
   /// Signs in again after a [PresenceSessionExpired].

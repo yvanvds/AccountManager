@@ -226,6 +226,35 @@ final Finder _cancel = find.byKey(const ValueKey<String>('late-scan-cancel'));
 String _textOf(WidgetTester tester, Finder finder) =>
     tester.widget<Text>(finder).data ?? '';
 
+/// What the **klaar om te scannen** badge says.
+String _indicatorText(WidgetTester tester) =>
+    tester
+        .widget<Text>(
+            find.descendant(of: _indicator, matching: find.byType(Text)))
+        .data ??
+    '';
+
+/// The student the queue tests journal directly — Jonas Peeters of the
+/// scan-tab roster, with the identifiers a Presence write addresses.
+const ScannedStudent _jonas = ScannedStudent(
+  scanCode: '123456',
+  wisaId: '123456',
+  smartschoolUid: 'jonas.peeters',
+  displayName: 'Jonas Peeters',
+  className: '3MTa',
+  internalUserId: 12016,
+  classGroupId: 77,
+);
+
+/// A shared settings document naming the school's Smartschool site — what the
+/// desk needs, beside a login, before it attaches a drain.
+AppSettings _withSmartschoolSite() {
+  const AppSettings base = AppSettings();
+  return base.copyWith(
+    smartschool: base.smartschool.copyWith(uri: 'arcadia.smartschool.be'),
+  );
+}
+
 void main() {
   testWidgets(
       'a scan shows the student\'s name and class immediately, with no '
@@ -868,6 +897,214 @@ void main() {
     expect(find.text('1 IN WACHTRIJ'), findsOneWidget);
   });
 
+  group('a failed registration can be retried, or settled by hand (#460)', () {
+    final Finder failedBadge =
+        find.byKey(const ValueKey<String>('late-queue-failed'));
+    final Finder retry = find.byKey(const ValueKey<String>('late-queue-retry'));
+    final Finder dialog =
+        find.byKey(const ValueKey<String>('late-handled-dialog'));
+
+    /// Journals Jonas Peeters and gives him up on with [error] — what the
+    /// drain leaves behind after Smartschool refused the write.
+    Future<LateArrivalRecord> failOne(
+      LateArrivalDesk desk, {
+      String error = 'Empty response from /Presence/Main/getConfig.',
+    }) async {
+      final LateArrivalJournal journal = desk.journal!;
+      final LateArrivalRecord record = await journal.register(
+        scan: const ScanRegisterable(_jonas),
+        scannedAt: DateTime(2026, 9, 7, 8, 42),
+        reasonLabel: 'Bus te laat',
+        reasonIsValid: true,
+      );
+      await journal.markSent(record.id);
+      return journal.markFailed(record.id, error);
+    }
+
+    testWidgets(
+        'Opnieuw proberen sends the failed registration again, and the line '
+        'goes from mislukt to verstuurd', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final _ScriptedWriter writer = _ScriptedWriter()
+        ..failures.add(const PresenceRejected(
+            'Empty response from /Presence/Main/getConfig.'));
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: InMemoryJournalStore(),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'geheim',
+          ),
+        ),
+        deskId: 'test-balie',
+        settings: LiveSettings(_withSmartschoolSite()),
+        writerFor: (_, __) => writer,
+      );
+      await desk.start();
+      addTearDown(desk.dispose);
+      expect(desk.draining, isTrue);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      await _scan(tester, '123456');
+      await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+      await tester.pumpAndSettle();
+
+      final LateArrivalRecord record = desk.journal!.records.single;
+      expect(record.status, LateArrivalStatus.failed);
+      expect(find.text('1 MISLUKT'), findsOneWidget);
+      expect(
+        _textOf(
+          tester,
+          find.byKey(ValueKey<String>('late-queue-failure-${record.id}')),
+        ),
+        contains('getConfig'),
+      );
+
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+
+      expect(writer.written, <int>[12016]);
+      expect(
+        desk.journal!.byId(record.id)!.status,
+        LateArrivalStatus.confirmed,
+      );
+      expect(failedBadge, findsNothing);
+      expect(find.text('0 IN WACHTRIJ'), findsOneWidget);
+      expect(
+        _textOf(tester, find.byKey(const ValueKey<String>('late-queue-line'))),
+        'Alles is naar Smartschool verstuurd.',
+      );
+      expect(retry, findsNothing);
+    });
+
+    testWidgets(
+        'Manueel ingevoerd asks first; Annuleren leaves the record exactly as '
+        'it was', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final LateArrivalRecord record = await failOne(desk);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('1 MISLUKT'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(ValueKey<String>('late-queue-handled-${record.id}')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(dialog, findsOneWidget);
+      expect(
+        _textOf(
+          tester,
+          find.byKey(const ValueKey<String>('late-handled-message')),
+        ),
+        allOf(
+          contains('Jonas Peeters (3MTa)'),
+          contains('niet naar Smartschool verstuurd'),
+          contains('zelf in Smartschool hebt ingevoerd'),
+        ),
+      );
+
+      await tester
+          .tap(find.byKey(const ValueKey<String>('late-handled-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(dialog, findsNothing);
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.failed);
+      expect(find.text('1 MISLUKT'), findsOneWidget);
+      expect(
+        find.byKey(ValueKey<String>('late-queue-failure-${record.id}')),
+        findsOneWidget,
+      );
+      // The keyboard is the scanner's again: the next card lands.
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Lea Janssens');
+    });
+
+    testWidgets(
+        'confirming takes the line off the list for good, and the record stays '
+        'in the journal', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final LateArrivalRecord record = await failOne(desk);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(ValueKey<String>('late-queue-handled-${record.id}')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('late-handled-confirm')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(dialog, findsNothing);
+      expect(failedBadge, findsNothing);
+      expect(
+        find.byKey(ValueKey<String>('late-queue-failure-${record.id}')),
+        findsNothing,
+      );
+      expect(retry, findsNothing);
+      expect(
+        _textOf(tester, find.byKey(const ValueKey<String>('late-queue-line'))),
+        'Alles is naar Smartschool verstuurd.',
+      );
+      expect(
+        desk.journal!.records.single.status,
+        LateArrivalStatus.handledManually,
+      );
+      expect(_indicatorText(tester), 'KLAAR OM TE SCANNEN');
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Lea Janssens');
+    });
+
+    testWidgets(
+        'a confirmation that cannot be written says so, and the record stays '
+        'mislukt', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final _GatedJournalStore store = _GatedJournalStore();
+      final LateArrivalDesk desk = await _openDesk(tester, store: store);
+      final LateArrivalRecord record = await failOne(desk);
+      store.failure = const _DiskFull();
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(ValueKey<String>('late-queue-handled-${record.id}')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey<String>('late-handled-confirm')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        _textOf(tester, find.byKey(const ValueKey<String>('late-queue-error'))),
+        allOf(contains('schijf vol'), contains('staat nog als mislukt')),
+      );
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.failed);
+      expect(find.text('1 MISLUKT'), findsOneWidget);
+    });
+  });
+
   testWidgets('a desk with no printer says so and still registers',
       (WidgetTester tester) async {
     // An empty shared list (#435) is a configuration, not a gap — no ticket
@@ -1371,6 +1608,31 @@ class _GatedJournalStore implements JournalStore {
 
   @override
   String locationOf(SchoolDay day) => _inner.locationOf(day);
+}
+
+/// Stands in for Smartschool's Presence module: records each accepted write,
+/// and throws [failures] first, one per call (#460). Never a live call — a
+/// presence write is a write against the school's tenant.
+class _ScriptedWriter implements LatePresenceWriter {
+  final List<Object> failures = <Object>[];
+  final List<int> written = <int>[];
+
+  @override
+  Future<void> setLate({
+    required int userId,
+    required int classGroupId,
+    required DateTime date,
+    required HalfDay part,
+    required bool withoutValidReason,
+    required String motivation,
+    bool keepRecordedAbsence = false,
+  }) async {
+    if (failures.isNotEmpty) throw failures.removeAt(0);
+    written.add(userId);
+  }
+
+  @override
+  Future<void> reauthenticate() async {}
 }
 
 /// What a journal write that could not land throws.

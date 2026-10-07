@@ -32,6 +32,7 @@ class SentPresence {
     required this.part,
     required this.withoutValidReason,
     required this.motivation,
+    this.keepRecordedAbsence = false,
   });
 
   final int userId;
@@ -40,6 +41,7 @@ class SentPresence {
   final HalfDay part;
   final bool withoutValidReason;
   final String motivation;
+  final bool keepRecordedAbsence;
 
   @override
   String toString() =>
@@ -69,6 +71,7 @@ class FakePresenceWriter implements LatePresenceWriter {
     required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
+    bool keepRecordedAbsence = false,
   }) async {
     final SentPresence attempt = SentPresence(
       userId: userId,
@@ -77,6 +80,7 @@ class FakePresenceWriter implements LatePresenceWriter {
       part: part,
       withoutValidReason: withoutValidReason,
       motivation: motivation,
+      keepRecordedAbsence: keepRecordedAbsence,
     );
     sent.add(attempt);
     if (_script.isNotEmpty) {
@@ -629,6 +633,202 @@ void main() {
       expect(journal.pending, isEmpty);
       await drain.close();
       await second.close();
+    });
+  });
+
+  group('the operator\'s Opnieuw proberen (#460)', () {
+    /// A journal with the drain behind its sink, the way the desk wires it — so
+    /// a requeue wakes the worker exactly as it does in the app.
+    Future<(LateArrivalJournal, LateArrivalDrain)> wired(
+      FakePresenceWriter writer,
+    ) async {
+      late final LateArrivalDrain drain;
+      final LateArrivalJournal journal = await openJournal(
+        sink: _LazySink(() => drain),
+      );
+      drain = drainOn(journal, writer);
+      return (journal, drain);
+    }
+
+    test('a failed registration is sent again and confirmed', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const PresenceRejected(
+              'Empty response from /Presence/Main/getConfig.'),
+        ],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+      expect(journal.records.single.status, LateArrivalStatus.failed);
+      expect(drain.status.failed, 1);
+
+      // Before #460 this was all the button did — and the failed record sat
+      // there: nothing queued, nothing sent.
+      drain.retryNow();
+      await drain.settle();
+      expect(writer.sent, hasLength(1));
+
+      final List<LateArrivalRecord> requeued = await journal.requeueFailures();
+      drain.retryNow();
+      await drain.settle();
+
+      expect(requeued.map((LateArrivalRecord r) => r.id),
+          <String>[journal.records.single.id]);
+      expect(writer.sent, hasLength(2));
+      expect(writer.accepted, hasLength(1));
+      expect(journal.records.single.status, LateArrivalStatus.confirmed);
+      expect(journal.records.single.error, isNull);
+      expect(drain.failures, isEmpty);
+      expect(drain.status.failed, 0);
+      expect(drain.status.isHealthy, isTrue);
+      await drain.close();
+    });
+
+    test(
+        'the retried write may not overwrite an absence recorded since; the '
+        'first send still overwrites', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[const PresenceRejected('geen rechten')],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+
+      await journal.requeueFailures();
+      await drain.settle();
+
+      expect(
+        writer.sent.map((SentPresence p) => p.keepRecordedAbsence).toList(),
+        <bool>[false, true],
+      );
+      await drain.close();
+    });
+
+    test(
+        'a retry Smartschool refuses again lands back on mislukt, with the '
+        'new reason', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const PresenceRejected('eerste weigering'),
+          const PresenceRejected('In Smartschool staat al "Ziek".'),
+        ],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+
+      await journal.requeueFailures();
+      await drain.settle();
+
+      final LateArrivalRecord record = journal.records.single;
+      expect(record.status, LateArrivalStatus.failed);
+      expect(record.error, 'In Smartschool staat al "Ziek".');
+      expect(drain.failures.single.id, record.id);
+      await drain.close();
+    });
+
+    test(
+        'a failure a later scan of the same half-day superseded is not sent '
+        'again — it would overwrite that scan', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[const PresenceRejected('geen rechten')],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      final ScanRegisterable jane = scanOf('jane.doe');
+      final LateArrivalRecord early = await register(journal, jane);
+      await drain.settle();
+      // The desk's correction, a little later the same morning, goes through.
+      final LateArrivalRecord correction = await register(
+        journal,
+        jane,
+        at: DateTime(2026, 9, 7, 8, 41),
+        reason: 'Doktersbriefje',
+      );
+      await drain.settle();
+      expect(journal.byId(early.id)!.status, LateArrivalStatus.failed);
+      expect(journal.byId(correction.id)!.status, LateArrivalStatus.confirmed);
+
+      // Not on the list, so not requeued…
+      expect(drain.failures, isEmpty);
+      expect(await journal.requeueFailures(), isEmpty);
+      drain.retryNow();
+      await drain.settle();
+
+      // …and the correction is still the last thing Smartschool was sent.
+      expect(
+        writer.sent.map((SentPresence p) => p.motivation).toList(),
+        <String>['08:14 – Bus te laat', '08:41 – Doktersbriefje'],
+      );
+      expect(journal.byId(early.id)!.status, LateArrivalStatus.failed);
+      expect(
+        () => journal.requeueFailed(early.id),
+        throwsA(isA<StateError>()),
+        reason: 'not even one at a time',
+      );
+      await drain.close();
+    });
+
+    test('a scan of the other half-day does not supersede a failure', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[const PresenceRejected('geen rechten')],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      final ScanRegisterable jane = scanOf('jane.doe');
+      final LateArrivalRecord morning = await register(journal, jane);
+      await drain.settle();
+      await register(journal, jane, at: DateTime(2026, 9, 7, 13, 5));
+      await drain.settle();
+
+      expect(drain.failures.map((LateArrivalRecord r) => r.id),
+          <String>[morning.id]);
+      await journal.requeueFailures();
+      await drain.settle();
+
+      expect(journal.byId(morning.id)!.status, LateArrivalStatus.confirmed);
+      expect(
+        writer.accepted.map((SentPresence p) => p.part).toList(),
+        <HalfDay>[HalfDay.afternoon, HalfDay.morning],
+      );
+      await drain.close();
+    });
+
+    test('a record handled by hand is not on the list and is never sent',
+        () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[const PresenceRejected('geen rechten')],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      final LateArrivalRecord record =
+          await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+
+      await journal.markHandledManually(record.id);
+      expect(drain.failures, isEmpty);
+      expect(drain.status.failed, 0);
+      expect(drain.status.needsAttention, isFalse);
+
+      expect(await journal.requeueFailures(), isEmpty);
+      drain.retryNow();
+      await drain.settle();
+      expect(writer.sent, hasLength(1));
+      expect(
+        journal.byId(record.id)!.status,
+        LateArrivalStatus.handledManually,
+      );
+      await drain.close();
     });
   });
 
