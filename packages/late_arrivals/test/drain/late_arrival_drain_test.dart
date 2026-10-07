@@ -160,6 +160,7 @@ void main() {
     int maxAttempts = 3,
     int maxSessionRenewals = 2,
     List<Duration>? waits,
+    String Function(Object error)? describeFailure,
   }) =>
       LateArrivalDrain(
         journal: journal,
@@ -169,6 +170,7 @@ void main() {
         maxSessionRenewals: maxSessionRenewals,
         clock: () => monday,
         sleep: (Duration d) async => waits?.add(d),
+        describeFailure: describeFailure,
       );
 
   Future<LateArrivalJournal> openJournal({LateArrivalRecordSink? sink}) =>
@@ -502,6 +504,215 @@ void main() {
     });
   });
 
+  group('a login Smartschool refused (#466)', () {
+    /// What the writer raises when Smartschool refused the login itself: the
+    /// operator's sentence, and the library's text on the line below.
+    const PresenceCredentialsRefused refused = PresenceCredentialsRefused(
+      'Smartschool aanvaardde het wachtwoord niet.\n'
+      'SmartschoolInvalidCredentialsError: Login failed.',
+    );
+
+    /// A journal with the drain behind its sink, the way the desk wires it —
+    /// so a new scan wakes the worker exactly as it does in the app.
+    Future<(LateArrivalJournal, LateArrivalDrain)> wired(
+      FakePresenceWriter writer, {
+      core.ILog? log,
+      List<Duration>? waits,
+      String Function(Object error)? describeFailure,
+    }) async {
+      late final LateArrivalDrain drain;
+      final LateArrivalJournal journal = await openJournal(
+        sink: _LazySink(() => drain),
+      );
+      drain = drainOn(
+        journal,
+        writer,
+        log: log,
+        waits: waits,
+        describeFailure: describeFailure,
+      );
+      return (journal, drain);
+    }
+
+    Future<LateArrivalRecord> registerJohn(LateArrivalJournal journal) =>
+        register(
+          journal,
+          scanOf('john.roe', accountId: '654321', name: 'John', surname: 'Roe'),
+          at: DateTime(2026, 9, 7, 8, 20),
+        );
+
+    test(
+        'stands the worker down at once: no fresh sign-in, no backoff, no '
+        'attempt spent and nothing failed', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[refused],
+      );
+      final RecordingLog log = RecordingLog();
+      final List<Duration> waits = <Duration>[];
+      final List<Object> described = <Object>[];
+      final (LateArrivalJournal journal, LateArrivalDrain drain) = await wired(
+        writer,
+        log: log,
+        waits: waits,
+        describeFailure: (Object error) {
+          described.add(error);
+          return '$error';
+        },
+      );
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+
+      // One login, the one the write made — and nothing after it: signing in
+      // again would only send the same credentials to be refused again.
+      expect(writer.sent, hasLength(1));
+      expect(writer.signIns, 0);
+      expect(waits, isEmpty);
+      // The registration is not the problem: queued, never given up on.
+      final LateArrivalRecord jane = journal.records.single;
+      expect(jane.status, LateArrivalStatus.pending);
+      expect(jane.error, isNull);
+      expect(journal.failures, isEmpty);
+
+      final LateArrivalDrainStatus status = drain.status;
+      expect(status.degraded, isTrue);
+      expect(status.credentialsRefused, isTrue);
+      expect(status.outstanding, 1);
+      expect(status.failed, 0);
+      expect(status.needsAttention, isTrue);
+      // The writer's words, as they stand: the describer is not asked.
+      expect(status.lastError, refused.message);
+      expect(described, isEmpty);
+      expect(
+        log.errors.single,
+        allOf(
+          contains('tot de aanmelding in orde is'),
+          contains('1 in wachtrij'),
+          contains(refused.message),
+        ),
+      );
+      await drain.close();
+    });
+
+    test('a new scan does not sign in again with the same login', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[refused],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+      expect(writer.sent, hasLength(1));
+
+      // Until #466 this woke the worker, and it logged in with the refused
+      // credentials all over again: about seven times per scan.
+      final LateArrivalRecord john = await registerJohn(journal);
+      await drain.settle();
+
+      expect(writer.sent, hasLength(1));
+      expect(writer.signIns, 0);
+      expect(journal.byId(john.id)!.status, LateArrivalStatus.pending);
+      expect(drain.status.outstanding, 2);
+      expect(drain.status.credentialsRefused, isTrue);
+      expect(drain.status.degraded, isTrue);
+      await drain.close();
+    });
+
+    test(
+        'Opnieuw proberen signs in once more: refused again, it stands down '
+        'after that one write; accepted, the whole queue goes out', () async {
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[refused, refused],
+      );
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer);
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+      await registerJohn(journal);
+      await drain.settle();
+      expect(writer.sent, hasLength(1));
+
+      drain.retryNow();
+      await drain.settle();
+      expect(writer.sent, hasLength(2));
+      expect(writer.accepted, isEmpty);
+      expect(drain.status.credentialsRefused, isTrue);
+      expect(journal.pending, hasLength(2));
+
+      drain.retryNow();
+      await drain.settle();
+      expect(writer.accepted.map((SentPresence p) => p.userId), <int>[
+        123456,
+        654321,
+      ]);
+      expect(journal.pending, isEmpty);
+      expect(drain.status.credentialsRefused, isFalse);
+      expect(drain.status.degraded, isFalse);
+      expect(drain.status.lastError, isNull);
+      await drain.close();
+    });
+
+    test(
+        'a fresh sign-in Smartschool refuses stands the worker down too, after '
+        'that one sign-in', () async {
+      // A session Smartschool stopped accepting, and a login it then refuses:
+      // the second factor, say. A second fresh sign-in would send the same.
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[const PresenceSessionExpired('verlopen')],
+      )..signInError = refused;
+      final List<Duration> waits = <Duration>[];
+      final (LateArrivalJournal journal, LateArrivalDrain drain) =
+          await wired(writer, waits: waits);
+      drain.start();
+      await register(journal, scanOf('jane.doe'));
+      await drain.settle();
+
+      expect(writer.sent, hasLength(1));
+      expect(writer.signIns, 1);
+      expect(waits, isEmpty);
+      expect(journal.records.single.status, LateArrivalStatus.pending);
+      expect(journal.failures, isEmpty);
+      expect(drain.status.credentialsRefused, isTrue);
+      expect(drain.status.lastError, refused.message);
+
+      await registerJohn(journal);
+      await drain.settle();
+      expect(writer.sent, hasLength(1));
+      expect(writer.signIns, 1);
+      await drain.close();
+    });
+
+    test(
+        'a new worker — the desk builds one for a changed login — sends what '
+        'the old one held back', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      await registerJohn(journal);
+      final FakePresenceWriter refusing = FakePresenceWriter(
+        failures: <Object?>[refused],
+      );
+      final LateArrivalDrain stoodDown = drainOn(journal, refusing);
+      stoodDown.start();
+      await stoodDown.settle();
+      expect(stoodDown.status.credentialsRefused, isTrue);
+      expect(journal.pending, hasLength(2));
+      await stoodDown.close();
+
+      final FakePresenceWriter fixed = FakePresenceWriter();
+      final LateArrivalDrain next = drainOn(journal, fixed);
+      expect(next.status.credentialsRefused, isFalse);
+      next.start();
+      await next.settle();
+
+      expect(fixed.accepted, hasLength(2));
+      expect(journal.pending, isEmpty);
+      expect(refusing.sent, hasLength(1));
+      await next.close();
+    });
+  });
+
   group('giving up', () {
     test('a rejected write fails at once, keeping the server text', () async {
       final LateArrivalJournal journal = await openJournal();
@@ -633,6 +844,154 @@ void main() {
       expect(journal.pending, isEmpty);
       await drain.close();
       await second.close();
+    });
+  });
+
+  group('a retried failure in the operator\'s words (#463)', () {
+    /// What the desk supplies, in miniature: a sentence for the operator,
+    /// with the error's own text kept on the line below it.
+    String describe(Object error) => 'Smartschool was even weg.\n$error';
+
+    test(
+        'a record given up on carries the describer\'s words, after the same '
+        'attempts and the same backoff', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const SocketFailure('eerste'),
+          const SocketFailure('tweede'),
+          const SocketFailure('derde — de laatste'),
+        ],
+      );
+      final RecordingLog log = RecordingLog();
+      final List<Duration> waits = <Duration>[];
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 3,
+        log: log,
+        waits: waits,
+        describeFailure: describe,
+      );
+
+      drain.start();
+      await drain.settle();
+
+      // Only the words changed: three attempts, backed off as ever.
+      expect(writer.sent, hasLength(3));
+      expect(
+          waits, const <Duration>[Duration(seconds: 2), Duration(seconds: 4)]);
+      final LateArrivalRecord failed = journal.records.single;
+      expect(failed.status, LateArrivalStatus.failed);
+      expect(failed.error, 'Smartschool was even weg.\nderde — de laatste');
+      expect(drain.status.lastError, failed.error);
+      expect(drain.status.degraded, isTrue);
+      // The log has the operator's sentence and the error's own text both.
+      expect(
+        log.errors,
+        everyElement(
+          allOf(
+            contains('Smartschool was even weg.'),
+            contains('derde — de laatste'),
+          ),
+        ),
+      );
+      await drain.close();
+    });
+
+    test('a sign-in that failed is put into words as well', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          for (int i = 0; i < 4; i++) const PresenceSessionExpired('verlopen'),
+        ],
+      )..signInError = const SocketFailure('geen netwerk');
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 2,
+        describeFailure: describe,
+      );
+
+      drain.start();
+      await drain.settle();
+
+      expect(journal.records.single.status, LateArrivalStatus.failed);
+      expect(
+        journal.records.single.error,
+        'Aanmelden bij Smartschool lukte niet: Smartschool was even weg.\n'
+        'geen netwerk',
+      );
+      await drain.close();
+    });
+
+    test(
+        'a rejection keeps the server\'s words, and an expired session its '
+        'own: the describer is not asked', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      await register(
+        journal,
+        scanOf('john.roe', accountId: '654321', name: 'John', surname: 'Roe'),
+      );
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const PresenceRejected('Klas 298 hoort niet bij dit account.'),
+          // Renewals capped at none: the expiry is John's one strike.
+          const PresenceSessionExpired('De sessie is verlopen.'),
+        ],
+      );
+      final List<Object> asked = <Object>[];
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 1,
+        maxSessionRenewals: 0,
+        describeFailure: (Object error) {
+          asked.add(error);
+          return describe(error);
+        },
+      );
+
+      drain.start();
+      await drain.settle();
+
+      expect(asked, isEmpty);
+      expect(
+        journal.records.first.error,
+        'Klas 298 hoort niet bij dit account.',
+      );
+      expect(journal.records.last.error, 'De sessie is verlopen.');
+      await drain.close();
+    });
+
+    test('a describer that throws costs the words, never the record', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const SocketFailure('geen verbinding'),
+          const SocketFailure('geen verbinding'),
+        ],
+      );
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 2,
+        describeFailure: (Object error) => throw StateError('stuk'),
+      );
+
+      drain.start();
+      await drain.settle();
+
+      expect(writer.sent, hasLength(2));
+      final LateArrivalRecord failed = journal.records.single;
+      expect(failed.status, LateArrivalStatus.failed);
+      expect(failed.error, 'geen verbinding');
+      expect(drain.status.degraded, isTrue);
+      await drain.close();
     });
   });
 

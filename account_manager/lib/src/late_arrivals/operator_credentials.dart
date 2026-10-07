@@ -313,17 +313,31 @@ const String smartschoolHostSuffix = '.smartschool.be';
 /// Smartschool login is a live interaction with the school's tenant, and the
 /// repo's live-testing policy keeps those out of CI entirely: every test binds a
 /// fake, and only the operator pressing the button drives
-/// [probeSmartschoolOperatorSignInLive].
+/// [probeSmartschoolOperatorSignInLive] against a real Smartschool.
 ///
-/// Throws on failure, carrying the library's own message — a wrong password and
-/// a missing second factor say different things, and the operator standing at
-/// the desk needs to be told which. A Smartschool that could not be reached at
-/// all is a [ss.SmartschoolConnectionError], which is not a login failure and
-/// is worded as such by [describeSmartschoolSignInFailure] (#455).
+/// Throws on failure, with the library's own typed error — a wrong password and
+/// a missing second factor are different types, and the operator standing at
+/// the desk needs to be told which; [describeSmartschoolSignInFailure] names
+/// the cause in Dutch (#467). A Smartschool that could not be reached at all is
+/// a [ss.SmartschoolConnectionError], which is not a login failure and is
+/// worded as such (#455).
 typedef SmartschoolSignInProbe = Future<void> Function(
   SmartschoolOperatorLogin login,
   String host,
 );
+
+/// How a Smartschool client is made: the shape of `SmartschoolClient.create`,
+/// less the options left at their defaults.
+///
+/// Both places that sign the operator in take one —
+/// `LiveSmartschoolPresenceSession` (#469) and
+/// [probeSmartschoolOperatorSignInLive] (#470) — defaulting to the library's
+/// own, so a test can hand in a client it watches being disposed, without a
+/// Smartschool on the network.
+typedef SmartschoolClientFactory = Future<ss.SmartschoolClient> Function(
+  ss.Credentials credentials, {
+  String? cacheDir,
+});
 
 /// The real **Aanmelding testen**: one full login, then nothing.
 ///
@@ -332,12 +346,18 @@ typedef SmartschoolSignInProbe = Future<void> Function(
 /// reads no presence, writes no presence and touches no student. A typo in a
 /// password should be caught here, minutes before the first student is late,
 /// rather than discovered as a queue that will not drain.
+///
+/// The client it signs in with is used for nothing else, so it is closed
+/// before the probe returns, whether the login stood or not (#470).
+/// [createClient] makes it — the library's own `SmartschoolClient.create`
+/// unless a test hands in another.
 Future<void> probeSmartschoolOperatorSignInLive(
   SmartschoolOperatorLogin login,
   String host, {
   String? cacheDir,
+  SmartschoolClientFactory createClient = ss.SmartschoolClient.create,
 }) async {
-  final ss.SmartschoolClient client = await ss.SmartschoolClient.create(
+  final ss.SmartschoolClient client = await createClient(
     ss.AppCredentials(
       username: login.username.trim(),
       password: login.password,
@@ -346,16 +366,88 @@ Future<void> probeSmartschoolOperatorSignInLive(
     ),
     cacheDir: cacheDir,
   );
-  await client.ensureAuthenticated();
+  try {
+    await client.ensureAuthenticated();
+  } finally {
+    // Until #470 nothing closed it, so every press of the button left a
+    // client's HTTP connections open until they timed out. Closing it does
+    // not touch a failed login's error: that is passed on as the library
+    // threw it, which is what `describeSmartschoolSignInFailure` words.
+    await client.dispose();
+  }
 }
 
-/// What a failed **Aanmelding testen** tells the person at the desk (#455).
+/// What is wrong with a login Smartschool refused, in the operator's words —
+/// or `null` when [error] is not such a refusal (#464).
+///
+/// A refusal is one of the library's authentication errors that it counts as
+/// rejected credentials itself (the list behind
+/// `SmartschoolClient.resetLoginAttempts`): the password, the second factor or
+/// the account verification did not get past the login. Each one names its
+/// cause, because each has a different fix in the same three fields of
+/// **Instellingen → Te laat** — the password, or the MFA field, which holds the
+/// authenticator's secret key or, for an account verification, a date of
+/// birth. They are told apart by type, never by the library's message.
+///
+/// One sentence about the login and nothing else: no Dart type name, none of
+/// the library's English, and no advice on where to go, which depends on where
+/// it is shown. A session Smartschool no longer accepts
+/// ([ss.SmartschoolSessionExpiredError]) is not a refused login, and neither is
+/// anything else; those return `null`.
+///
+/// It is also the test for "Smartschool refused the login" itself: a non-null
+/// answer is what makes the presence writer stand the drain down instead of
+/// signing in with the same credentials again (#466). Its seven types are the
+/// library's own `_rejectsCredentials`.
+///
+/// It is the one wording of a refused login in the app, wherever the operator
+/// reads one: `describePresenceFailure` puts it on the desk's queue panel while
+/// the drain is stood down over a refused login, and
+/// [describeSmartschoolSignInFailure] puts it on the status line under
+/// **Aanmelding testen** (#467).
+String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
+      ss.SmartschoolInvalidCredentialsError() =>
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
+      ss.SmartschoolTwoFactorRequiredError() =>
+        'Smartschool vraagt voor dit account een tweestapsverificatie, maar '
+            'bij de aanmelding staat geen geheime sleutel van de '
+            'authenticator (MFA).',
+      ss.SmartschoolTwoFactorRejectedError() =>
+        'Smartschool aanvaardde de code van de tweestapsverificatie niet. '
+            'Kijk de geheime sleutel van de authenticator (MFA) na, en of de '
+            'klok van deze computer juist staat.',
+      ss.SmartschoolInvalidTotpSecretError() =>
+        'De geheime sleutel van de authenticator (MFA) is geen geldige '
+            'sleutel: vul de tekenreeks in die Smartschool toont bij het '
+            'instellen van de authenticator, niet de code van zes cijfers uit '
+            'de app.',
+      ss.SmartschoolUnsupportedTwoFactorMethodError() =>
+        'Dit account gebruikt een tweestapsverificatie die het programma niet '
+            'kan invullen: alleen een authenticator-app (zoals Google '
+            'Authenticator) wordt ondersteund.',
+      ss.SmartschoolAccountVerificationRequiredError() =>
+        'Smartschool vraagt voor dit account een accountverificatie met de '
+            'geboortedatum, maar in het MFA-veld van de aanmelding staat geen '
+            'datum (jjjj-mm-dd).',
+      ss.SmartschoolAccountVerificationRejectedError() =>
+        'Smartschool aanvaardde de geboortedatum van de accountverificatie '
+            'niet. Kijk de datum in het MFA-veld na (jjjj-mm-dd).',
+      _ => null,
+    };
+
+/// What a failed **Aanmelding testen** tells the person at the desk (#455,
+/// #467).
 ///
 /// Two kinds of failure come out of the probe, and they call for different
 /// hands. A login Smartschool *refused* — a wrong password, a missing second
-/// factor, a code it did not accept — comes back in the library's own words,
-/// unchanged: those messages already tell the three apart, and the operator is
-/// the one to fix them. A [ss.SmartschoolConnectionError] is the other kind:
+/// factor, a code it did not accept, an account verification — is the
+/// operator's to fix, and is named in the same Dutch sentence the desk's queue
+/// panel uses for it, [describeRefusedSmartschoolSignIn] (#464, #466). #455 had
+/// kept the library's own words here, because they tell those causes apart;
+/// the Dutch sentence does too, by type, and the library's `toString()` puts a
+/// Dart type name and English in front of the operator on the one screen they
+/// are sent to to check the login (#467). A
+/// [ss.SmartschoolConnectionError] is the other kind:
 /// Smartschool was never reached, so nothing was sent — not the username, not
 /// the password, not the MFA — and no amount of retyping them helps. Until the
 /// library told the two apart (`yvanvds/dartschool#21`) a certificate the PC
@@ -370,10 +462,13 @@ Future<void> probeSmartschoolOperatorSignInLive(
 /// the Windows store; the open-it-once-in-Edge workaround is offered last, as
 /// the fallback it is.
 ///
-/// The library's own sentence stays reachable on a second line — whoever is
-/// asked to fix it still needs to see what Dio said — but it is never the
-/// operator's first line.
+/// For both kinds the library's own text stays reachable on a second line —
+/// whoever is asked to fix it still needs to see what Smartschool or Dio said —
+/// but it is never the operator's first line. Anything else comes back as its
+/// own text, unchanged.
 String describeSmartschoolSignInFailure(Object error, String host) {
+  final String? refusedLogin = describeRefusedSmartschoolSignIn(error);
+  if (refusedLogin != null) return '$refusedLogin\n$error';
   if (error is! ss.SmartschoolConnectionError) return '$error';
   final String operatorLine = _isCertificateFailure(error)
       ? 'De beveiligde verbinding met $host wordt op deze computer niet '

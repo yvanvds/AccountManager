@@ -19,6 +19,10 @@ class _RecordingWriter implements LatePresenceWriter {
   final List<int> written = <int>[];
   int signIns = 0;
 
+  /// Every write asked for, refused or not — for a login Smartschool refused,
+  /// the number of times the drain logged in with it (#466).
+  int calls = 0;
+
   /// Thrown, one per call and in order, before anything is recorded as
   /// written — a Smartschool that refuses the next writes (#460).
   final List<Object> failures = <Object>[];
@@ -33,6 +37,7 @@ class _RecordingWriter implements LatePresenceWriter {
     required String motivation,
     bool keepRecordedAbsence = false,
   }) async {
+    calls++;
     if (failures.isNotEmpty) throw failures.removeAt(0);
     written.add(userId);
   }
@@ -111,6 +116,7 @@ void main() {
     LiveSettings? settings,
     LatePresenceWriterFactory? writerFor,
     SmartschoolSignInProbe? signInProbe,
+    RetryBackoff drainBackoff = LateArrivalDrain.defaultBackoff,
   }) =>
       LateArrivalDesk(
         journalStore: journalStore ?? InMemoryJournalStore(),
@@ -120,6 +126,7 @@ void main() {
         settings: settings,
         writerFor: writerFor,
         signInProbe: signInProbe,
+        drainBackoff: drainBackoff,
       );
 
   Future<LateArrivalRecord> register(LateArrivalDesk desk) =>
@@ -336,6 +343,73 @@ void main() {
     });
   });
 
+  group('a registration given up on after an outage (#463)', () {
+    test(
+        'carries a Dutch sentence for the operator, with the library\'s own '
+        'words on the line below', () async {
+      // The desk wires the describer into the drain it builds; without it the
+      // record would carry `SmartschoolConnectionError: Unable to reach …`.
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError(
+        'Unable to reach Smartschool at https://arcadia.smartschool.be: the '
+        'connection failed (SocketException: Connection refused)',
+      );
+      final writer = _RecordingWriter()
+        ..failures.addAll(<Object>[for (int i = 0; i < 5; i++) unreachable]);
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        writerFor: (_, __) => writer,
+        // Five attempts on the real clock would be half a minute of backoff.
+        drainBackoff:
+            const RetryBackoff(base: Duration.zero, max: Duration.zero),
+      );
+      await desk.start();
+
+      final record = await register(desk);
+      await desk.drain!.settle();
+
+      final LateArrivalRecord failed = desk.journal!.byId(record.id)!;
+      expect(failed.status, LateArrivalStatus.failed);
+      expect(writer.failures, isEmpty, reason: 'all five attempts were made');
+      expect(desk.drain!.status.degraded, isTrue);
+
+      final DeskWarning reason = DeskWarning.fromText(failed.error!);
+      expect(
+        reason.message,
+        'Smartschool was niet bereikbaar vanaf deze computer. Probeer opnieuw '
+        'zodra de netwerkverbinding in orde is; lukt het dan nog niet, test de '
+        'aanmelding bij Instellingen → Te laat.',
+      );
+      expect(reason.detail, '$unreachable');
+      desk.dispose();
+    });
+  });
+
+  group('DeskWarning.fromText (#463)', () {
+    test('one line is all sentence, with nothing behind it', () {
+      final DeskWarning warning =
+          DeskWarning.fromText('  Klas 298 hoort niet bij dit account.  ');
+      expect(warning.message, 'Klas 298 hoort niet bij dit account.');
+      expect(warning.hasDetail, isFalse);
+    });
+
+    test('the first line is the sentence and the rest is the detail', () {
+      final DeskWarning warning = DeskWarning.fromText(
+        'Smartschool was even weg.\n'
+        'SmartschoolConnectionError: Unable to reach Smartschool\n'
+        'Error: SocketException: Connection refused\n',
+      );
+      expect(warning.message, 'Smartschool was even weg.');
+      expect(
+        warning.detail,
+        'SmartschoolConnectionError: Unable to reach Smartschool\n'
+        'Error: SocketException: Connection refused',
+      );
+      expect(warning.hasDetail, isTrue);
+    });
+  });
+
   group('Opnieuw proberen and Manueel ingevoerd (#460)', () {
     test('Opnieuw proberen sends a failed registration again', () async {
       final writer = _RecordingWriter()
@@ -423,6 +497,128 @@ void main() {
         throwsA(isA<StateError>()),
       );
       expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.pending);
+      desk.dispose();
+    });
+  });
+
+  group('a login Smartschool refused (#466)', () {
+    const ScannedStudent lea = ScannedStudent(
+      scanCode: '223344',
+      wisaId: '223344',
+      smartschoolUid: 'lea.janssens',
+      displayName: 'Lea Janssens',
+      className: '3MTa',
+      internalUserId: 4243,
+      classGroupId: 77,
+    );
+
+    test(
+        'holds the queue through new scans and unrelated settings, and only a '
+        'changed login sends it', () async {
+      // One writer per login, as the desk builds them: Smartschool refuses the
+      // stored password on every write, and takes the corrected one.
+      const PresenceCredentialsRefused refused = PresenceCredentialsRefused(
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.\n'
+        'SmartschoolInvalidCredentialsError: Login failed.',
+      );
+      final Map<String, _RecordingWriter> writers =
+          <String, _RecordingWriter>{};
+      final settings = LiveSettings(_withSite('arcadia.smartschool.be'));
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: settings,
+        writerFor: (SmartschoolOperatorLogin built, _) {
+          final _RecordingWriter writer = _RecordingWriter();
+          if (built.password == login.password) {
+            writer.failures
+                .addAll(<Object>[for (int i = 0; i < 20; i++) refused]);
+          }
+          return writers[built.password] = writer;
+        },
+      );
+      await desk.start();
+      final _RecordingWriter stale = writers[login.password]!;
+
+      final jonas = await register(desk);
+      await desk.drain!.settle();
+      expect(stale.calls, 1);
+      expect(stale.signIns, 0);
+      expect(desk.drain!.status.credentialsRefused, isTrue);
+      expect(desk.journal!.byId(jonas.id)!.status, LateArrivalStatus.pending);
+      expect(desk.journal!.failures, isEmpty);
+
+      // Lea is late too: queued, and nobody logs in for her.
+      final leaRecord = await desk.journal!.register(
+        scan: const ScanRegisterable(lea),
+        scannedAt: DateTime(2026, 9, 7, 8, 50),
+        reasonLabel: 'Bus te laat',
+        reasonIsValid: true,
+      );
+      await desk.drain!.settle();
+      expect(stale.calls, 1);
+
+      // A settings change that leaves the login and the site alone keeps the
+      // same drain, stood down, rather than starting over with the same
+      // credentials.
+      final LateArrivalDrain stoodDown = desk.drain!;
+      settings.publish(
+        _withSite('arcadia.smartschool.be').copyWith(schoolPrefix: 'SMA'),
+      );
+      await _settle();
+      expect(desk.drain, same(stoodDown));
+      expect(stale.calls, 1);
+      expect(desk.drain!.status.credentialsRefused, isTrue);
+
+      // The operator corrects the password in Instellingen.
+      await desk.saveLogin(
+        const SmartschoolOperatorLogin(
+          username: 'ann.peeters',
+          password: 'nieuw-geheim',
+        ),
+      );
+      await desk.drain!.settle();
+
+      expect(writers['nieuw-geheim']!.written, <int>[4242, 4243]);
+      expect(desk.journal!.byId(jonas.id)!.status, LateArrivalStatus.confirmed);
+      expect(
+        desk.journal!.byId(leaRecord.id)!.status,
+        LateArrivalStatus.confirmed,
+      );
+      expect(desk.drain!.status.credentialsRefused, isFalse);
+      expect(stale.calls, 1, reason: 'never again with the refused password');
+      desk.dispose();
+    });
+
+    test('Opnieuw proberen logs in once more with the same login', () async {
+      const PresenceCredentialsRefused refused =
+          PresenceCredentialsRefused('Het wachtwoord klopt niet.');
+      final writer = _RecordingWriter()
+        ..failures.addAll(<Object>[refused, refused]);
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        writerFor: (_, __) => writer,
+      );
+      await desk.start();
+      final record = await register(desk);
+      await desk.drain!.settle();
+      expect(writer.calls, 1);
+
+      // Still refused: one more login, and down again.
+      await desk.retryNow();
+      await desk.drain!.settle();
+      expect(writer.calls, 2);
+      expect(desk.drain!.status.credentialsRefused, isTrue);
+      expect(desk.journal!.byId(record.id)!.status, LateArrivalStatus.pending);
+
+      // Fixed in Smartschool in the meantime: it goes out.
+      await desk.retryNow();
+      await desk.drain!.settle();
+      expect(writer.written, <int>[4242]);
+      expect(
+        desk.journal!.byId(record.id)!.status,
+        LateArrivalStatus.confirmed,
+      );
       desk.dispose();
     });
   });
@@ -536,10 +732,12 @@ void main() {
     });
 
     test(
-        'a wrong password still shows the library\'s own authentication '
-        'message, unchanged (#455)', () async {
-      // The diagnostic the button exists for. The connection wording below
-      // must not swallow it.
+        'a wrong password says so in Dutch, with the library\'s own text on '
+        'the line below (#467)', () async {
+      // The diagnostic the button exists for. Until #467 it came back as the
+      // library's `toString()` — `SmartschoolInvalidCredentialsError: Login
+      // failed. …` — on the one screen the operator is sent to to check the
+      // login. The connection wording below must not swallow it either.
       const ss.SmartschoolInvalidCredentialsError refused =
           ss.SmartschoolInvalidCredentialsError();
       final desk = deskWith(
@@ -547,7 +745,61 @@ void main() {
         signInProbe: (_, __) async => throw refused,
       );
       await desk.start();
-      expect(await desk.testSignIn(login), '$refused');
+      expect(
+        await desk.testSignIn(login),
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.\n'
+        '$refused',
+      );
+      desk.dispose();
+    });
+
+    test(
+        'every login Smartschool refuses names its cause in the queue panel\'s '
+        'Dutch, never a Dart type name, and keeps the library\'s text on the '
+        'line below (#467)', () async {
+      // One wording of a refused login across the app: the sentence the
+      // desk's queue panel shows while the drain is stood down over the same
+      // refusal (#464, #466).
+      const List<ss.SmartschoolAuthenticationError> refusals =
+          <ss.SmartschoolAuthenticationError>[
+        ss.SmartschoolInvalidCredentialsError(),
+        ss.SmartschoolTwoFactorRequiredError(),
+        ss.SmartschoolTwoFactorRejectedError(),
+        ss.SmartschoolInvalidTotpSecretError(),
+        ss.SmartschoolUnsupportedTwoFactorMethodError(<String>['sms']),
+        ss.SmartschoolAccountVerificationRequiredError(),
+        ss.SmartschoolAccountVerificationRejectedError(),
+      ];
+      for (final ss.SmartschoolAuthenticationError refused in refusals) {
+        final String type = '${refused.runtimeType}';
+        final desk = deskWith(
+          settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+          signInProbe: (_, __) async => throw refused,
+        );
+        await desk.start();
+        final List<String> lines = (await desk.testSignIn(login))!.split('\n');
+        expect(lines.first, describeRefusedSmartschoolSignIn(refused),
+            reason: type);
+        expect(lines.first, isNot(contains(type)));
+        expect(lines.first, isNot(contains(refused.message)));
+        expect(lines.skip(1).join('\n'), '$refused', reason: type);
+        desk.dispose();
+      }
+    });
+
+    test(
+        'an authentication error that is not a refused login keeps its own '
+        'text (#467)', () async {
+      // A session Smartschool stopped accepting is not the operator's
+      // password, and no Dutch sentence about the password may claim it is.
+      const ss.SmartschoolSessionExpiredError expired =
+          ss.SmartschoolSessionExpiredError();
+      final desk = deskWith(
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        signInProbe: (_, __) async => throw expired,
+      );
+      await desk.start();
+      expect(await desk.testSignIn(login), '$expired');
       desk.dispose();
     });
 

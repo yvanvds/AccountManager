@@ -51,6 +51,7 @@ import 'package:flutter/widgets.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 
 import 'operator_credentials.dart';
+import 'smartschool_presence_writer.dart' show describePresenceFailure;
 
 /// Builds the thing that actually writes a presence, for one login against one
 /// Smartschool host.
@@ -82,6 +83,27 @@ typedef LatePresenceWriterFactory = LatePresenceWriter Function(
 @immutable
 class DeskWarning {
   const DeskWarning(this.message, {this.detail = ''});
+
+  /// Reads [text] the way the desk writes a failure down: the first line is
+  /// the operator's sentence, and whatever follows it is the machine's own
+  /// words (#463).
+  ///
+  /// That is the shape of the two describers that put a library failure into
+  /// Dutch — `describePresenceFailure`, whose text a registration the drain
+  /// gave up on carries in the journal, and
+  /// `describeSmartschoolSignInFailure` (#455). A record's error is one
+  /// string, on disk and in the shared copy alike, so the split is made where
+  /// it is shown rather than stored. Text on one line is all [message], with
+  /// nothing behind it.
+  factory DeskWarning.fromText(String text) {
+    final String trimmed = text.trim();
+    final int newline = trimmed.indexOf('\n');
+    if (newline < 0) return DeskWarning(trimmed);
+    return DeskWarning(
+      trimmed.substring(0, newline).trim(),
+      detail: trimmed.substring(newline + 1).trim(),
+    );
+  }
 
   /// What the operator is told, in the operator's words. Always present.
   final String message;
@@ -118,6 +140,7 @@ class LateArrivalDesk extends ChangeNotifier {
     this.writerFor,
     this.signInProbe,
     this.log,
+    this.drainBackoff = LateArrivalDrain.defaultBackoff,
     DateTime Function()? now,
   }) : _now = now ?? DateTime.now;
 
@@ -170,6 +193,14 @@ class LateArrivalDesk extends ChangeNotifier {
 
   /// Where the mirror and the drain report a persistent failure.
   final core.ILog? log;
+
+  /// How long the drain waits between attempts at one registration.
+  ///
+  /// The drain's own default in production. A seam for the end-to-end run of
+  /// a registration the drain gives up on (#463): its five attempts are half
+  /// a minute of backoff on the real clock, and a short one reaches the same
+  /// *mislukt* line in milliseconds.
+  final RetryBackoff drainBackoff;
 
   final DateTime Function() _now;
 
@@ -336,9 +367,10 @@ class LateArrivalDesk extends ChangeNotifier {
   ///
   /// Returns `null` when the login worked, and the failure text otherwise —
   /// including for a build with no probe wired, which is a state to report
-  /// rather than an exception to throw. A login Smartschool refused keeps the
-  /// library's own wording; a Smartschool that could not be reached is told
-  /// apart from it, in Dutch, naming the host (#455) — see
+  /// rather than an exception to throw. A login Smartschool refused names its
+  /// cause in Dutch (#467); a Smartschool that could not be reached is told
+  /// apart from it, in Dutch, naming the host (#455). Either way the library's
+  /// own text follows on the next line — see
   /// [describeSmartschoolSignInFailure].
   ///
   /// [host] defaults to the configured site; Instellingen passes the URI *as
@@ -510,7 +542,10 @@ class LateArrivalDesk extends ChangeNotifier {
 
     _drainWarning = '';
     // Same login, same host, worker already running: leave it be. Rebuilding
-    // here would drop a session mid-queue every time anybody saved anything.
+    // here would drop a session mid-queue every time anybody saved anything —
+    // and would undo a stand-down over a refused login (#466), signing in with
+    // the same credentials again for a change that did not touch them. A
+    // changed login does rebuild it, and that is what sends the queue it held.
     if (_drain != null && identical(_drainLogin, login) && _drainHost == host) {
       return;
     }
@@ -522,6 +557,10 @@ class LateArrivalDesk extends ChangeNotifier {
       journal: journal,
       writer: build(login, host),
       log: log,
+      backoff: drainBackoff,
+      // The library's failures in the operator's words, with its own text on
+      // the line below for whoever has to diagnose them (#463).
+      describeFailure: describePresenceFailure,
     );
     _drain = drain;
     _sinks.add(drain);

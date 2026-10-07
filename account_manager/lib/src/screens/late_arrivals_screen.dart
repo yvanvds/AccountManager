@@ -872,7 +872,6 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
   /// given up on.
   Widget _queuePanel(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
-    final ColorScheme colors = Theme.of(context).colorScheme;
 
     final LateArrivalJournal? journal = _desk?.journal;
     final List<LateArrivalRecord> records =
@@ -885,6 +884,37 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
     final List<LateArrivalRecord> failed =
         journal?.failures ?? const <LateArrivalRecord>[];
     final bool degraded = _drainStatus?.degraded ?? false;
+    // Stood down because Smartschool refused the login (#466): nothing goes
+    // out until the operator fixes it, not even on the next scan, so the line
+    // has to say what was refused. The writer's words, read as the mislukt
+    // lines read theirs (#463): its sentence on the line, the library's text
+    // behind Details.
+    final bool loginRefused = _drainStatus?.credentialsRefused ?? false;
+    final DeskWarning refusal = loginRefused
+        ? DeskWarning.fromText(_drainStatus?.lastError ?? '')
+        : const DeskWarning('');
+    final DeskWarning line = switch ((outstanding, failed.length, degraded)) {
+      (0, 0, _) => const DeskWarning('Alles is naar Smartschool verstuurd.'),
+      (_, _, true) when loginRefused => DeskWarning(
+          'Het versturen naar Smartschool is gestopt tot de aanmelding in orde '
+          'is.${refusal.message.isEmpty ? '' : ' ${refusal.message}'} Niets is '
+          'verloren — alles staat bewaard op deze computer.',
+          detail: refusal.detail,
+        ),
+      (_, _, true) => const DeskWarning(
+          'Het versturen naar Smartschool is gestopt na een reeks fouten. '
+          'Niets is verloren — alles staat bewaard op deze computer.',
+        ),
+      (_, 0, _) => const DeskWarning(
+          'Deze registraties worden op de achtergrond naar Smartschool '
+          'verstuurd.',
+        ),
+      _ => const DeskWarning(
+          'De mislukte registraties worden niet vanzelf opnieuw geprobeerd. '
+          'Probeer ze opnieuw, of voer ze zelf in Smartschool in en duid ze '
+          'aan als manueel ingevoerd.',
+        ),
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -910,43 +940,15 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
           ],
         ),
         const SizedBox(height: PlinkSpacing.s2),
-        Text(
-          switch ((outstanding, failed.length, degraded)) {
-            (0, 0, _) => 'Alles is naar Smartschool verstuurd.',
-            (_, _, true) =>
-              'Het versturen naar Smartschool is gestopt na een reeks fouten. '
-                  'Niets is verloren — alles staat bewaard op deze computer.',
-            (_, 0, _) => 'Deze registraties worden op de achtergrond naar '
-                'Smartschool verstuurd.',
-            _ => 'De mislukte registraties worden niet vanzelf opnieuw '
-                'geprobeerd. Probeer ze opnieuw, of voer ze zelf in '
-                'Smartschool in en duid ze aan als manueel ingevoerd.',
-          },
-          key: const ValueKey<String>('late-queue-line'),
-          style: text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
-        ),
+        _QueueStatusLine(line),
         for (final LateArrivalRecord r in failed) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s2),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  '${r.displayName}, ${r.className} — '
-                  '${r.error ?? 'onbekende fout'}',
-                  key: ValueKey<String>('late-queue-failure-${r.id}'),
-                  style: text.bodySmall,
-                ),
-              ),
-              const SizedBox(width: PlinkSpacing.s3),
-              // Per line, never in bulk (#460): each press is the operator's
-              // own statement that *this* student is in Smartschool.
-              TextButton(
-                key: ValueKey<String>('late-queue-handled-${r.id}'),
-                onPressed: () => unawaited(_confirmHandledManually(r)),
-                child: const Text('Manueel ingevoerd'),
-              ),
-            ],
+          _QueueFailureLine(
+            // Keyed on the record so a line's open Details never carries over
+            // to the record that takes its slot.
+            key: ValueKey<String>('late-queue-failure-line-${r.id}'),
+            record: r,
+            onHandledManually: () => unawaited(_confirmHandledManually(r)),
           ),
         ],
         if (degraded || failed.isNotEmpty) ...<Widget>[
@@ -1398,33 +1400,205 @@ class _DeskNoteState extends State<_DeskNote> {
             ],
           ),
           if (hasDetail && _open)
-            Padding(
-              padding: const EdgeInsets.only(
-                left: 18 + PlinkSpacing.s2,
-                top: PlinkSpacing.s2,
-              ),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(PlinkSpacing.s2),
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerHighest,
-                  borderRadius: const BorderRadius.all(
-                    Radius.circular(PlinkRadius.base),
-                  ),
-                ),
-                // Selectable because the whole point of keeping it is that
-                // somebody pastes it into an issue or a chat.
-                child: SelectableText(
-                  widget.detail,
-                  key: const ValueKey<String>('late-note-detail'),
-                  style: text.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
+            _RawDetail(
+              widget.detail,
+              textKey: const ValueKey<String>('late-note-detail'),
+              indent: 18 + PlinkSpacing.s2,
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The queue panel's one line on where the queue stands, with the machine's
+/// own words — when there are any — behind **Details**.
+///
+/// Only a drain that stood down over a refused login has any (#466): the line
+/// then names what Smartschool refused, in the writer's Dutch, and the
+/// library's text is one click away, as it is on a *mislukt* line (#463).
+class _QueueStatusLine extends StatefulWidget {
+  const _QueueStatusLine(this.line);
+
+  final DeskWarning line;
+
+  @override
+  State<_QueueStatusLine> createState() => _QueueStatusLineState();
+}
+
+class _QueueStatusLineState extends State<_QueueStatusLine> {
+  bool _open = false;
+
+  @override
+  void didUpdateWidget(_QueueStatusLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The queue moved on, or was refused for another reason: fold the old
+    // words away rather than leave them open under a line they no longer
+    // explain.
+    if (_open && widget.line.detail != oldWidget.line.detail) _open = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    final DeskWarning line = widget.line;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                line.message,
+                key: const ValueKey<String>('late-queue-line'),
+                style:
+                    text.bodyMedium?.copyWith(color: colors.onSurfaceVariant),
+              ),
+            ),
+            if (line.hasDetail) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s2),
+              TextButton(
+                key: const ValueKey<String>('late-queue-line-details'),
+                onPressed: () => setState(() => _open = !_open),
+                child: Text(_open ? 'Verberg details' : 'Details'),
+              ),
+            ],
+          ],
+        ),
+        if (line.hasDetail && _open)
+          _RawDetail(
+            line.detail,
+            textKey: const ValueKey<String>('late-queue-line-detail'),
+          ),
+      ],
+    );
+  }
+}
+
+/// One registration the drain gave up on, on the queue panel's *mislukt*
+/// list: who, why, and **Manueel ingevoerd** (#460).
+///
+/// The why is the record's error read as a [DeskWarning] (#463): its first
+/// line on the line, and whatever follows it — the library's own text, which
+/// `describePresenceFailure` keeps under its Dutch sentence — behind
+/// **Details**, as the desk's notes do (#414). Until #463 the whole error stood
+/// on the line, and for a Smartschool that was briefly away that was a Dart
+/// type name and an English sentence about JSON: nothing the operator could
+/// choose between **Opnieuw proberen** and **Manueel ingevoerd** by.
+class _QueueFailureLine extends StatefulWidget {
+  const _QueueFailureLine({
+    super.key,
+    required this.record,
+    required this.onHandledManually,
+  });
+
+  final LateArrivalRecord record;
+  final VoidCallback onHandledManually;
+
+  @override
+  State<_QueueFailureLine> createState() => _QueueFailureLineState();
+}
+
+class _QueueFailureLineState extends State<_QueueFailureLine> {
+  bool _open = false;
+
+  @override
+  void didUpdateWidget(_QueueFailureLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A retry that failed again brings its own words; fold the old ones away.
+    if (_open && widget.record.error != oldWidget.record.error) _open = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final LateArrivalRecord r = widget.record;
+    final DeskWarning reason = DeskWarning.fromText(r.error ?? '');
+    final String why =
+        reason.message.isEmpty ? 'onbekende fout' : reason.message;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                '${r.displayName}, ${r.className} — $why',
+                key: ValueKey<String>('late-queue-failure-${r.id}'),
+                style: text.bodySmall,
+              ),
+            ),
+            if (reason.hasDetail) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s2),
+              TextButton(
+                key: ValueKey<String>('late-queue-failure-details-${r.id}'),
+                onPressed: () => setState(() => _open = !_open),
+                child: Text(_open ? 'Verberg details' : 'Details'),
+              ),
+            ],
+            const SizedBox(width: PlinkSpacing.s3),
+            // Per line, never in bulk (#460): each press is the operator's
+            // own statement that *this* student is in Smartschool.
+            TextButton(
+              key: ValueKey<String>('late-queue-handled-${r.id}'),
+              onPressed: widget.onHandledManually,
+              child: const Text('Manueel ingevoerd'),
+            ),
+          ],
+        ),
+        if (reason.hasDetail && _open)
+          _RawDetail(
+            reason.detail,
+            textKey: ValueKey<String>('late-queue-failure-detail-${r.id}'),
+          ),
+      ],
+    );
+  }
+}
+
+/// The machine's own words under a **Details** disclosure (#414): set apart,
+/// in a monospace face, and selectable.
+class _RawDetail extends StatelessWidget {
+  const _RawDetail(this.detail, {required this.textKey, this.indent = 0});
+
+  final String detail;
+
+  /// The key the tests read the raw text by.
+  final Key textKey;
+
+  /// How far the pane is indented, to line up with the sentence above it.
+  final double indent;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.only(left: indent, top: PlinkSpacing.s2),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(PlinkSpacing.s2),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest,
+          borderRadius: const BorderRadius.all(
+            Radius.circular(PlinkRadius.base),
+          ),
+        ),
+        // Selectable because the whole point of keeping it is that somebody
+        // pastes it into an issue or a chat.
+        child: SelectableText(
+          detail,
+          key: textKey,
+          style: text.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+            fontFamily: 'monospace',
+          ),
+        ),
       ),
     );
   }

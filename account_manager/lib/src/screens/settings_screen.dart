@@ -3591,12 +3591,13 @@ class _SmartschoolOperatorEditor extends StatelessWidget {
     );
   }
 
-  /// What the last **Aanmelding testen** (or save, or wipe) did, in one line.
+  /// What the last **Aanmelding testen** (or save, or wipe) did.
   ///
-  /// A failure is coloured as an error and keeps Smartschool's own wording: a
-  /// wrong password, a missing second factor and an account without presence
-  /// rights are three different problems with three different answers, and only
-  /// the server can tell them apart.
+  /// A failure is coloured as an error and names its cause in Dutch on the
+  /// first line — a wrong password, a missing second factor and a Smartschool
+  /// that was never reached are different problems with different answers
+  /// (`describeSmartschoolSignInFailure`, #455, #467) — with the library's own
+  /// text on the line below it, for whoever is asked to fix it.
   Widget _signInStatusLine(BuildContext context) {
     final TextTheme text = Theme.of(context).textTheme;
     final ColorScheme colors = Theme.of(context).colorScheme;

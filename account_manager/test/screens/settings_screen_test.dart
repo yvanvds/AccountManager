@@ -8,6 +8,7 @@ import 'package:account_manager/src/screens/settings_screen.dart';
 import 'package:account_state/account_state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 import 'package:smartschool_api/smartschool_api.dart';
@@ -2888,9 +2889,12 @@ void main() {
     });
 
     testWidgets(
-        'a refused sign-in keeps Smartschool\'s own wording, in the '
-        'error colour', (WidgetTester tester) async {
+        'a refused sign-in names its cause in Dutch, with Smartschool\'s own '
+        'wording on the line below, in the error colour (#467)',
+        (WidgetTester tester) async {
       _useTallWindow(tester);
+      const ss.SmartschoolInvalidCredentialsError refused =
+          ss.SmartschoolInvalidCredentialsError();
       final desk = deskWith(
         credentials: InMemoryOperatorCredentialStore(
           const SmartschoolOperatorLogin(
@@ -2899,8 +2903,7 @@ void main() {
           ),
         ),
         settings: withSite('https://arcadia.smartschool.be'),
-        probe: (_, __) async =>
-            throw StateError('Foutieve gebruikersnaam of wachtwoord.'),
+        probe: (_, __) async => throw refused,
       );
       final harness = SettingsHarness();
       await tester.pumpWidget(
@@ -2914,7 +2917,14 @@ void main() {
       await tester.pumpAndSettle();
 
       final Text line = tester.widget<Text>(status());
-      expect(line.data, contains('Foutieve gebruikersnaam of wachtwoord.'));
+      final List<String> lines = line.data!.split('\n');
+      // The operator's line: what is wrong, in Dutch — no Dart type name.
+      expect(
+        lines.first,
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
+      );
+      // The library's own words, still on screen for whoever fixes it.
+      expect(lines.skip(1).join('\n'), '$refused');
       expect(
         line.style?.color,
         Theme.of(tester.element(status())).colorScheme.error,

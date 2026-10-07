@@ -18,6 +18,8 @@ import 'package:account_manager/src/late_arrivals/refusal_beep.dart'
     show RefusalBeep;
 import 'package:account_manager/src/late_arrivals/smartschool_presence_writer.dart'
     show SmartschoolPresenceSession, SmartschoolPresenceWriter;
+import 'package:account_manager/src/reconcile/log_buffer.dart'
+    show LogBuffer, LogEntry;
 import 'package:account_manager/src/settings/connection_config.dart';
 import 'package:account_manager/src/settings/local_preferences.dart';
 import 'package:account_manager/src/settings/settings_bootstrap.dart'
@@ -39,6 +41,7 @@ import 'package:late_arrivals/late_arrivals.dart'
         LateArrivalStatus,
         LatePresenceWriter,
         PresenceRejected,
+        RetryBackoff,
         ScanRegisterable,
         ScannedStudent,
         TicketPrinter,
@@ -866,6 +869,145 @@ void main() {
         line.style?.color,
         Theme.of(tester.element(status)).colorScheme.error,
       );
+
+      // Unmount before letting go of the desk, so the scope is not listening to a
+      // disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'Aanmelding testen names a login Smartschool refused in Dutch — the '
+        'password, the second factor, the MFA key, the account verification — '
+        'with no Dart type name, and the library\'s own words on the line '
+        'below (#467)', (WidgetTester tester) async {
+      // **Aanmelding testen** is where the operator is sent to check the login:
+      // the desk's queue panel says so while the drain is stood down over a
+      // refused one (#466). It used to answer a refusal with the library's
+      // `toString()` — `SmartschoolInvalidCredentialsError: Login failed. …`,
+      // a Dart type name and English — while the queue panel said the same
+      // thing in Dutch. Now both say it in the one wording
+      // (`describeRefusedSmartschoolSignIn`, #464).
+      //
+      // Proven where the operator reads it: the real settings screen inside the
+      // real shell, through the real desk, one press of the real button per
+      // refusal. The probe is a fake, permanently — a Smartschool sign-in is a
+      // live interaction with the school's tenant, and the repo's live-testing
+      // policy keeps those out of CI entirely. It throws the library's own
+      // typed refusals, one per press, and lets the last press through.
+      useTallWindow(tester);
+
+      const List<ss.SmartschoolAuthenticationError> refusals =
+          <ss.SmartschoolAuthenticationError>[
+        ss.SmartschoolInvalidCredentialsError(),
+        ss.SmartschoolTwoFactorRequiredError(),
+        ss.SmartschoolTwoFactorRejectedError(),
+        ss.SmartschoolInvalidTotpSecretError(),
+        ss.SmartschoolUnsupportedTwoFactorMethodError(<String>['sms']),
+        ss.SmartschoolAccountVerificationRequiredError(),
+        ss.SmartschoolAccountVerificationRejectedError(),
+      ];
+      final List<Object?> answers = <Object?>[...refusals, null];
+      final List<String> probedHosts = <String>[];
+
+      const AppSettings base = AppSettings();
+      final InMemorySettingsStore shared = InMemorySettingsStore(
+        base.copyWith(
+          smartschool: base.smartschool.copyWith(uri: 'arcadia'),
+        ),
+      );
+      final LiveSettings live = LiveSettings();
+
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: InMemoryJournalStore(),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'balie-467',
+        settings: live,
+        writerFor: (_, __) => _RecordingPresenceWriter(),
+        signInProbe: (SmartschoolOperatorLogin login, String host) async {
+          probedHosts.add(host);
+          final Object? refused = answers.removeAt(0);
+          if (refused != null) throw refused;
+        },
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        settingsBootstrap: () async => SettingsServices(
+          store: shared,
+          secrets: InMemorySecretProvider(const {}),
+          liveSettings: live,
+        ),
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
+
+      final Finder testButton =
+          find.byKey(const ValueKey('settings-smartschool-operator-test'));
+      final Finder status =
+          find.byKey(const ValueKey('settings-smartschool-operator-status'));
+      Future<Text> press() async {
+        await tester.ensureVisible(testButton);
+        await tester.pumpAndSettle();
+        await tester.tap(testButton);
+        await tester.pumpAndSettle();
+        return tester.widget<Text>(status);
+      }
+
+      final List<String> operatorLines = <String>[];
+      for (final ss.SmartschoolAuthenticationError refused in refusals) {
+        final String type = '${refused.runtimeType}';
+        final Text line = await press();
+        final List<String> lines = line.data!.split('\n');
+        operatorLines.add(lines.first);
+        // The operator's line: the cause, in the words the queue panel uses —
+        // not the type name, and none of the library's English.
+        expect(lines.first, describeRefusedSmartschoolSignIn(refused),
+            reason: type);
+        expect(lines.first, isNot(contains(type)));
+        expect(lines.first, isNot(contains(refused.message)));
+        // Still not a connection failure: the #455 wording is for a
+        // Smartschool that was never reached, and this one answered.
+        expect(lines.first, isNot(contains('niet verstuurd')), reason: type);
+        // The library's own words, for whoever is asked to fix it, below.
+        expect(lines.skip(1).join('\n'), '$refused', reason: type);
+        // Reported as the failure it is, in the error colour.
+        expect(
+          line.style?.color,
+          Theme.of(tester.element(status)).colorScheme.error,
+          reason: type,
+        );
+      }
+
+      // The wrong password, word for word, as the operator at the desk reads
+      // it — and seven causes, seven different sentences.
+      expect(
+        operatorLines.first,
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
+      );
+      expect(operatorLines.toSet(), hasLength(refusals.length));
+
+      // Once the login is right, the refusal is gone from the line.
+      final Text fixed = await press();
+      expect(fixed.data, contains('is gelukt'));
+      expect(fixed.data, isNot(contains('aanvaardde')));
+      expect(
+        fixed.style?.color,
+        isNot(Theme.of(tester.element(status)).colorScheme.error),
+      );
+      expect(probedHosts, hasLength(refusals.length + 1));
+      expect(probedHosts.toSet(), <String>{'arcadia.smartschool.be'});
 
       // Unmount before letting go of the desk, so the scope is not listening to a
       // disposed notifier.
@@ -1703,6 +1845,525 @@ void main() {
     });
 
     testWidgets(
+        'a registration given up on because Smartschool kept answering '
+        'unreadably, or could not be reached, reads as a Dutch sentence on its '
+        'mislukt line, with the library\'s words behind Details (#463)',
+        (WidgetTester tester) async {
+      // The bug, end to end. A Smartschool outage that outlasts the drain's
+      // backoff leaves a registration *mislukt*, and the line said why in a
+      // Dart type name and an English sentence about JSON — to the operator
+      // who has to choose between Opnieuw proberen and Manueel ingevoerd.
+      //
+      // This needs the real app, because the words travel through every
+      // layer: the library's typed error, the real `SmartschoolPresenceWriter`
+      // passing it on unchanged, the real drain retrying it to the end of its
+      // attempts and putting it into words with the describer the desk wires
+      // in, the journal on a real file, and the queue panel splitting the
+      // sentence from the library's text on the real tab, with real fonts.
+      // Only the Smartschool session under the writer is a fake: a presence
+      // write is a write against the school's tenant, and the live-testing
+      // policy keeps those out of CI.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-463-');
+      addTearDown(() => deleteTempDir(dir));
+      final Directory journalDir =
+          Directory('${dir.path}${Platform.pathSeparator}journaal');
+
+      // Every attempt at Jonas meets the gateway's page; every attempt at Lea
+      // meets a Smartschool that cannot be reached. After that it answers.
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError(
+        'Unable to reach Smartschool at https://arcadia.smartschool.be: the '
+        'connection failed (SocketException: Connection refused)',
+      );
+      final _ScriptedPresenceSession session = _ScriptedPresenceSession()
+        ..failures.addAll(<Object>[
+          for (int i = 0; i < 5; i++)
+            ss.SmartschoolPresenceUnreadableAnswerError.fromPage(
+              '<!DOCTYPE html><html><head><title>502 Bad Gateway</title>'
+              '</head><body><center><h1>502 Bad Gateway</h1></center></body>'
+              '</html>',
+              path: '/Presence/Main/getConfig',
+              statusCode: 502,
+            ),
+          for (int i = 0; i < 5; i++) unreachable,
+        ]);
+
+      const AppSettings base = AppSettings();
+      final LiveSettings live = LiveSettings(
+        base.copyWith(
+          smartschool:
+              base.smartschool.copyWith(uri: 'https://arcadia.smartschool.be'),
+        ),
+      );
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: live,
+      );
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(journalDir),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'onthaal-463',
+        settings: live,
+        // The production writer, over the fake session.
+        writerFor: (_, __) => SmartschoolPresenceWriter(session),
+        // The drain's five attempts, without half a minute of real backoff.
+        drainBackoff: const RetryBackoff(
+          base: Duration(milliseconds: 1),
+          max: Duration(milliseconds: 1),
+        ),
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+        refusalBeep: _CountingRefusalBeep(),
+        ticketTransport: _RecordingTicketTransport(),
+        preferences: LocalPreferences.inMemory(),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      await pumpUntil(
+        tester,
+        'the desk to open its journal and attach the drain',
+        () => desk.ready && desk.draining,
+      );
+
+      String textOf(Key key) => tester.widget<Text>(find.byKey(key)).data ?? '';
+
+      /// Scans [code], picks the first reason, and waits until the drain has
+      /// spent its attempts on it and given it up.
+      Future<LateArrivalRecord> registerGivenUp(
+        String code,
+        String name,
+      ) async {
+        for (final String character in code.split('')) {
+          await tester.sendKeyEvent(
+            _scannerKeys[character]!,
+            character: character,
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(textOf(const ValueKey<String>('late-scan-name')), name);
+        await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+        await tester.pumpAndSettle();
+        // Real file I/O and a real background drain behind the tap (#425):
+        // wait on what happened, never on a frame.
+        await pumpUntil(
+          tester,
+          'the drain to give up on $name',
+          () => desk.journal!.failures
+              .any((LateArrivalRecord r) => r.displayName == name),
+        );
+        return desk.journal!.failures
+            .singleWhere((LateArrivalRecord r) => r.displayName == name);
+      }
+
+      // --- Jonas: the gateway's 502 page, five times over. ---------------------
+      final LateArrivalRecord jonas =
+          await registerGivenUp('123456', 'Jonas Peeters');
+      // --- Lea: Smartschool cannot be reached at all. ---------------------------
+      final LateArrivalRecord lea =
+          await registerGivenUp('223344', 'Lea Janssens');
+
+      // Retried to the end of the attempts, both of them — only the words
+      // changed — and never signed in again for a network that was down.
+      expect(session.calls, 10);
+      expect(session.failures, isEmpty);
+      expect(session.signIns, 0);
+      expect(find.text('2 MISLUKT'), findsOneWidget);
+
+      // The lines the operator reads: a Dutch sentence each, with no type name
+      // and none of the library's English.
+      expect(
+        textOf(ValueKey<String>('late-queue-failure-${jonas.id}')),
+        'Jonas Peeters, 3MTa — Smartschool gaf een antwoord dat niet gelezen '
+        'kon worden (HTTP 502). Meestal is Smartschool dan even niet '
+        'bereikbaar; probeer opnieuw zodra het weer werkt.',
+      );
+      expect(
+        textOf(ValueKey<String>('late-queue-failure-${lea.id}')),
+        'Lea Janssens, 3MTa — Smartschool was niet bereikbaar vanaf deze '
+        'computer. Probeer opnieuw zodra de netwerkverbinding in orde is; lukt '
+        'het dan nog niet, test de aanmelding bij Instellingen → Te laat.',
+      );
+
+      // The library's words are one click away, for whoever has to fix it.
+      Finder details(LateArrivalRecord r) =>
+          find.byKey(ValueKey<String>('late-queue-failure-details-${r.id}'));
+      Finder detail(LateArrivalRecord r) =>
+          find.byKey(ValueKey<String>('late-queue-failure-detail-${r.id}'));
+      expect(detail(jonas), findsNothing);
+      await tester.ensureVisible(details(jonas));
+      await tester.pumpAndSettle();
+      await tester.tap(details(jonas));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail(jonas)).data,
+        allOf(
+          startsWith('SmartschoolPresenceUnreadableAnswerError: '),
+          contains('/Presence/Main/getConfig'),
+          contains('502 Bad Gateway'),
+        ),
+      );
+      expect(detail(lea), findsNothing);
+      await tester.ensureVisible(details(lea));
+      await tester.pumpAndSettle();
+      await tester.tap(details(lea));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail(lea)).data,
+        '$unreachable',
+      );
+
+      // And on disk, under the same record, for whoever reads the journal.
+      final String onDisk = journalDir
+          .listSync()
+          .whereType<File>()
+          .map((File f) => f.readAsStringSync())
+          .join();
+      expect(onDisk, contains('Smartschool gaf een antwoord'));
+      expect(onDisk, contains('SmartschoolPresenceUnreadableAnswerError'));
+      expect(onDisk, contains('SmartschoolConnectionError'));
+
+      // --- Smartschool is back; the operator does what the line said. ---------
+      final Finder retry =
+          find.byKey(const ValueKey<String>('late-queue-retry'));
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await pumpUntil(
+        tester,
+        'both registrations to be confirmed by Smartschool',
+        () =>
+            desk.journal!.byId(jonas.id)!.status ==
+                LateArrivalStatus.confirmed &&
+            desk.journal!.byId(lea.id)!.status == LateArrivalStatus.confirmed &&
+            find.text('0 IN WACHTRIJ').evaluate().isNotEmpty,
+      );
+      expect(session.accepted, <int>[12016, 12017]);
+      expect(find.byKey(const ValueKey<String>('late-queue-failed')),
+          findsNothing);
+      expect(
+        textOf(const ValueKey<String>('late-queue-line')),
+        'Alles is naar Smartschool verstuurd.',
+      );
+
+      // Unmount before letting go of the desk, so the scope is not listening to
+      // a disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a login Smartschool refuses is tried once: the queue stands still with '
+        'the cause in Dutch and the library\'s words behind Details, a new scan '
+        'logs in for nobody, and a corrected login in Instellingen sends it all '
+        '(#466)', (WidgetTester tester) async {
+      // The bug, end to end. The operator's Smartschool password changed. Every
+      // write made the client log in and Smartschool refused it, and the drain
+      // signed in again and wrote again: seven refused logins for the first
+      // registration, and as many again for every later scan — a morning of
+      // late students was some sixty refused logins against the operator's own
+      // account, which Smartschool locks after enough of them.
+      //
+      // This needs the real app, because the fix is a chain no single layer
+      // shows: the library's typed refusal, the real
+      // `SmartschoolPresenceWriter` telling the drain to stand down, the real
+      // drain not waking for the next scan, the journal on a real file, the
+      // log the desk writes to, the queue panel saying why on the real tab with
+      // real fonts, and the desk building a new drain when Instellingen saves
+      // a corrected login. Only the Smartschool session under each writer is a
+      // fake: a presence write is a write against the school's tenant, and the
+      // live-testing policy keeps those out of CI.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-466-');
+      addTearDown(() => deleteTempDir(dir));
+      final Directory journalDir =
+          Directory('${dir.path}${Platform.pathSeparator}journaal');
+
+      // One session per login, as `SmartschoolPresenceWriter.forOperator`
+      // builds one: Smartschool refuses the stored password on every login,
+      // and takes the corrected one.
+      const ss.SmartschoolInvalidCredentialsError wrongPassword =
+          ss.SmartschoolInvalidCredentialsError();
+      final Map<String, _ScriptedPresenceSession> sessions =
+          <String, _ScriptedPresenceSession>{};
+
+      const AppSettings base = AppSettings();
+      final AppSettings withSite = base.copyWith(
+        smartschool:
+            base.smartschool.copyWith(uri: 'https://arcadia.smartschool.be'),
+      );
+      final LiveSettings live = LiveSettings(withSite);
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: live,
+      );
+      final LogBuffer log = LogBuffer();
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(journalDir),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'onthaal-466',
+        settings: live,
+        // The production writer, over a fake session for each login.
+        writerFor: (SmartschoolOperatorLogin login, _) {
+          final _ScriptedPresenceSession session = _ScriptedPresenceSession();
+          if (login.password == 'zeergeheim') session.refusal = wrongPassword;
+          sessions[login.password] = session;
+          return SmartschoolPresenceWriter(session);
+        },
+        log: log,
+        // Should the drain ever retry a refusal again, it gets there in
+        // milliseconds and fails the counts below, rather than half a minute.
+        drainBackoff: const RetryBackoff(
+          base: Duration(milliseconds: 1),
+          max: Duration(milliseconds: 1),
+        ),
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        // The settings document too: the corrected login is saved through
+        // Instellingen, as the operator saves it.
+        settingsBootstrap: () async => SettingsServices(
+          store: InMemorySettingsStore(withSite),
+          secrets: InMemorySecretProvider(const {}),
+          liveSettings: live,
+        ),
+        reconcileBootstrap: harness.bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+        refusalBeep: _CountingRefusalBeep(),
+        ticketTransport: _RecordingTicketTransport(),
+        preferences: LocalPreferences.inMemory(),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      await pumpUntil(
+        tester,
+        'the desk to open its journal and attach the drain',
+        () => desk.ready && desk.draining,
+      );
+      final _ScriptedPresenceSession refused = sessions['zeergeheim']!;
+
+      String textOf(Key key) => tester.widget<Text>(find.byKey(key)).data ?? '';
+      final Finder queueLine =
+          find.byKey(const ValueKey<String>('late-queue-line'));
+      final Finder retry =
+          find.byKey(const ValueKey<String>('late-queue-retry'));
+
+      /// Scans [code] and picks the first reason, and returns once the
+      /// registration is on disk, in the journal.
+      Future<LateArrivalRecord> registerLate(String code, String name) async {
+        final int before = desk.journal!.records.length;
+        for (final String character in code.split('')) {
+          await tester.sendKeyEvent(
+            _scannerKeys[character]!,
+            character: character,
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(textOf(const ValueKey<String>('late-scan-name')), name);
+        await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+        await tester.pumpAndSettle();
+        // Real file I/O behind the tap (#425): wait on what happened, never
+        // on a frame.
+        await pumpUntil(
+          tester,
+          'the registration of $name to reach the journal',
+          () => desk.journal!.records.length > before,
+        );
+        return desk.journal!.records
+            .lastWhere((LateArrivalRecord r) => r.displayName == name);
+      }
+
+      // --- Jonas is late; the stored password no longer works. ----------------
+      final LateArrivalRecord jonas =
+          await registerLate('123456', 'Jonas Peeters');
+      await pumpUntil(
+        tester,
+        'the drain to stand down over the refused login',
+        () =>
+            desk.drain!.status.credentialsRefused &&
+            !desk.drain!.status.draining,
+      );
+      await desk.drain!.settle();
+
+      // One refused login — the one the write made — and not one more.
+      expect(refused.calls, 1);
+      expect(refused.signIns, 0);
+      // Nothing is wrong with the registration: queued, not mislukt.
+      expect(desk.journal!.byId(jonas.id)!.status, LateArrivalStatus.pending);
+      expect(desk.journal!.failures, isEmpty);
+      expect(
+        find.byKey(const ValueKey<String>('late-queue-failed')),
+        findsNothing,
+      );
+      expect(find.text('1 IN WACHTRIJ'), findsOneWidget);
+
+      // The line the operator reads: why nothing is sent, what Smartschool
+      // refused and where to fix it, in Dutch — no type name, no English.
+      const String refusedLine =
+          'Het versturen naar Smartschool is gestopt tot de aanmelding in orde '
+          'is. Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet. '
+          'Pas de aanmelding aan bij Instellingen → Te laat, test ze met '
+          'Aanmelding testen en probeer daarna opnieuw. Niets is verloren — '
+          'alles staat bewaard op deze computer.';
+      expect(textOf(const ValueKey<String>('late-queue-line')), refusedLine);
+      expect(retry, findsOneWidget);
+
+      // The library's words are one click away, for whoever has to fix it.
+      final Finder details =
+          find.byKey(const ValueKey<String>('late-queue-line-details'));
+      final Finder detail =
+          find.byKey(const ValueKey<String>('late-queue-line-detail'));
+      expect(detail, findsNothing);
+      await tester.ensureVisible(details);
+      await tester.pumpAndSettle();
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(tester.widget<SelectableText>(detail).data, '$wrongPassword');
+
+      // And in the log, once, with both.
+      List<String> logged() => <String>[
+            for (final LogEntry entry in log.entries)
+              if (entry.isError) entry.message,
+          ];
+      expect(
+        logged().single,
+        allOf(
+          contains('tot de aanmelding in orde is'),
+          contains('Smartschool aanvaardde de gebruikersnaam of het '
+              'wachtwoord niet.'),
+          contains('$wrongPassword'),
+        ),
+      );
+
+      // --- Lea is late too. ---------------------------------------------------
+      // Until #466 her scan woke the drain, and it logged in with the refused
+      // password all over again. Now she waits in the queue with Jonas.
+      final LateArrivalRecord lea =
+          await registerLate('223344', 'Lea Janssens');
+      await desk.drain!.settle();
+      await tester.pumpAndSettle();
+      expect(refused.calls, 1);
+      expect(refused.signIns, 0);
+      expect(desk.journal!.byId(lea.id)!.status, LateArrivalStatus.pending);
+      expect(find.text('2 IN WACHTRIJ'), findsOneWidget);
+      expect(textOf(const ValueKey<String>('late-queue-line')), refusedLine);
+      expect(logged(), hasLength(1));
+
+      // --- Opnieuw proberen: the operator's own call, worth one login. --------
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await pumpUntil(
+        tester,
+        'the drain to try the login once more and stand down again',
+        () =>
+            refused.calls == 2 &&
+            desk.drain!.status.credentialsRefused &&
+            !desk.drain!.status.draining,
+      );
+      await desk.drain!.settle();
+      await tester.pumpAndSettle();
+      expect(refused.calls, 2);
+      expect(refused.signIns, 0);
+      expect(desk.journal!.pending, hasLength(2));
+      expect(desk.journal!.failures, isEmpty);
+      expect(queueLine, findsOneWidget);
+      expect(textOf(const ValueKey<String>('late-queue-line')), refusedLine);
+
+      // The day file holds both registrations, queued, and no give-up.
+      final String onDisk = journalDir
+          .listSync()
+          .whereType<File>()
+          .map((File f) => f.readAsStringSync())
+          .join();
+      expect(onDisk, contains('Jonas Peeters'));
+      expect(onDisk, contains('Lea Janssens'));
+      expect(onDisk, isNot(contains('"failed"')));
+
+      // --- The operator corrects the password in Instellingen. ----------------
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
+      final Finder password =
+          find.byKey(const ValueKey('settings-smartschool-operator-password'));
+      await tester.ensureVisible(password);
+      await tester.pumpAndSettle();
+      // The tap is not decoration: `enterText` alone would go to a dead text
+      // connection.
+      await tester.tap(password);
+      await tester.pumpAndSettle();
+      await tester.enterText(password, 'nieuwgeheim');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('settings-save')));
+      await tester.tap(find.byKey(const ValueKey('settings-save')));
+      await tester.pumpAndSettle();
+
+      // A changed login is a new drain, and the queue goes out by itself.
+      await pumpUntil(
+        tester,
+        'both registrations to be confirmed with the corrected login',
+        () =>
+            desk.journal!.byId(jonas.id)!.status ==
+                LateArrivalStatus.confirmed &&
+            desk.journal!.byId(lea.id)!.status == LateArrivalStatus.confirmed,
+      );
+      expect(sessions['nieuwgeheim']!.accepted, <int>[12016, 12017]);
+      expect(sessions['nieuwgeheim']!.signIns, 0);
+      expect(refused.calls, 2, reason: 'never again with the refused password');
+
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      await pumpUntil(
+        tester,
+        'the queue panel to show an empty queue',
+        () => find.text('0 IN WACHTRIJ').evaluate().isNotEmpty,
+      );
+      expect(
+        textOf(const ValueKey<String>('late-queue-line')),
+        'Alles is naar Smartschool verstuurd.',
+      );
+      expect(retry, findsNothing);
+
+      // Unmount before letting go of the desk, so the scope is not listening to
+      // a disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'the desk picks its ticket printer off the shared list, prints on the '
         'one it picked, and is still pointed at it after a restart (#436)',
         (WidgetTester tester) async {
@@ -2158,6 +2819,15 @@ class _ScriptedPresenceSession implements SmartschoolPresenceSession {
   /// Thrown one per call, in order, as the library throws them.
   final List<Object> failures = <Object>[];
 
+  /// Thrown one per [signIn], in order — a login Smartschool refuses (#464).
+  /// Once it runs out, a sign-in succeeds.
+  final List<Object> signInFailures = <Object>[];
+
+  /// While set, thrown by every call and every [signIn], before anything else
+  /// — a stored login Smartschool refuses for as long as it is not corrected
+  /// (#466). Each throw is a refused login against the operator's account.
+  Object? refusal;
+
   /// When set, a write that is not failed waits for it before it is accepted,
   /// so a test can look at the desk while that write is in flight.
   Completer<void>? gate;
@@ -2173,11 +2843,18 @@ class _ScriptedPresenceSession implements SmartschoolPresenceSession {
     Set<String>? onlyReplacing,
   }) async {
     calls++;
+    final Object? refused = refusal;
+    if (refused != null) throw refused;
     if (failures.isNotEmpty) throw failures.removeAt(0);
     await gate?.future;
     accepted.add(userId);
   }
 
   @override
-  Future<void> signIn() async => signIns++;
+  Future<void> signIn() async {
+    signIns++;
+    final Object? refused = refusal;
+    if (refused != null) throw refused;
+    if (signInFailures.isNotEmpty) throw signInFailures.removeAt(0);
+  }
 }
