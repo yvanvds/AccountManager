@@ -315,11 +315,12 @@ const String smartschoolHostSuffix = '.smartschool.be';
 /// fake, and only the operator pressing the button drives
 /// [probeSmartschoolOperatorSignInLive].
 ///
-/// Throws on failure, carrying the library's own message — a wrong password and
-/// a missing second factor say different things, and the operator standing at
-/// the desk needs to be told which. A Smartschool that could not be reached at
-/// all is a [ss.SmartschoolConnectionError], which is not a login failure and
-/// is worded as such by [describeSmartschoolSignInFailure] (#455).
+/// Throws on failure, with the library's own typed error — a wrong password and
+/// a missing second factor are different types, and the operator standing at
+/// the desk needs to be told which; [describeSmartschoolSignInFailure] names
+/// the cause in Dutch (#467). A Smartschool that could not be reached at all is
+/// a [ss.SmartschoolConnectionError], which is not a login failure and is
+/// worded as such (#455).
 typedef SmartschoolSignInProbe = Future<void> Function(
   SmartschoolOperatorLogin login,
   String host,
@@ -372,10 +373,11 @@ Future<void> probeSmartschoolOperatorSignInLive(
 /// signing in with the same credentials again (#466). Its seven types are the
 /// library's own `_rejectsCredentials`.
 ///
-/// `describePresenceFailure` puts this on the desk's queue panel while the
-/// drain is stood down over a refused login. **Aanmelding testen** does not
-/// use it yet: a refusal there still comes back in the library's own words
-/// (see [describeSmartschoolSignInFailure], #467).
+/// It is the one wording of a refused login in the app, wherever the operator
+/// reads one: `describePresenceFailure` puts it on the desk's queue panel while
+/// the drain is stood down over a refused login, and
+/// [describeSmartschoolSignInFailure] puts it on the status line under
+/// **Aanmelding testen** (#467).
 String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
       ss.SmartschoolInvalidCredentialsError() =>
         'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
@@ -406,14 +408,18 @@ String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
       _ => null,
     };
 
-/// What a failed **Aanmelding testen** tells the person at the desk (#455).
+/// What a failed **Aanmelding testen** tells the person at the desk (#455,
+/// #467).
 ///
 /// Two kinds of failure come out of the probe, and they call for different
 /// hands. A login Smartschool *refused* — a wrong password, a missing second
-/// factor, a code it did not accept — comes back in the library's own words,
-/// unchanged: those messages already tell the three apart, and the operator is
-/// the one to fix them. (The drain, which stands down over the same refusal,
-/// says it in Dutch, [describeRefusedSmartschoolSignIn], #464, #466.) A
+/// factor, a code it did not accept, an account verification — is the
+/// operator's to fix, and is named in the same Dutch sentence the desk's queue
+/// panel uses for it, [describeRefusedSmartschoolSignIn] (#464, #466). #455 had
+/// kept the library's own words here, because they tell those causes apart;
+/// the Dutch sentence does too, by type, and the library's `toString()` puts a
+/// Dart type name and English in front of the operator on the one screen they
+/// are sent to to check the login (#467). A
 /// [ss.SmartschoolConnectionError] is the other kind:
 /// Smartschool was never reached, so nothing was sent — not the username, not
 /// the password, not the MFA — and no amount of retyping them helps. Until the
@@ -429,10 +435,13 @@ String? describeRefusedSmartschoolSignIn(Object error) => switch (error) {
 /// the Windows store; the open-it-once-in-Edge workaround is offered last, as
 /// the fallback it is.
 ///
-/// The library's own sentence stays reachable on a second line — whoever is
-/// asked to fix it still needs to see what Dio said — but it is never the
-/// operator's first line.
+/// For both kinds the library's own text stays reachable on a second line —
+/// whoever is asked to fix it still needs to see what Smartschool or Dio said —
+/// but it is never the operator's first line. Anything else comes back as its
+/// own text, unchanged.
 String describeSmartschoolSignInFailure(Object error, String host) {
+  final String? refusedLogin = describeRefusedSmartschoolSignIn(error);
+  if (refusedLogin != null) return '$refusedLogin\n$error';
   if (error is! ss.SmartschoolConnectionError) return '$error';
   final String operatorLine = _isCertificateFailure(error)
       ? 'De beveiligde verbinding met $host wordt op deze computer niet '

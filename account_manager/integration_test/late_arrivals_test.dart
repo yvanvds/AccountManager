@@ -878,6 +878,145 @@ void main() {
     });
 
     testWidgets(
+        'Aanmelding testen names a login Smartschool refused in Dutch — the '
+        'password, the second factor, the MFA key, the account verification — '
+        'with no Dart type name, and the library\'s own words on the line '
+        'below (#467)', (WidgetTester tester) async {
+      // **Aanmelding testen** is where the operator is sent to check the login:
+      // the desk's queue panel says so while the drain is stood down over a
+      // refused one (#466). It used to answer a refusal with the library's
+      // `toString()` — `SmartschoolInvalidCredentialsError: Login failed. …`,
+      // a Dart type name and English — while the queue panel said the same
+      // thing in Dutch. Now both say it in the one wording
+      // (`describeRefusedSmartschoolSignIn`, #464).
+      //
+      // Proven where the operator reads it: the real settings screen inside the
+      // real shell, through the real desk, one press of the real button per
+      // refusal. The probe is a fake, permanently — a Smartschool sign-in is a
+      // live interaction with the school's tenant, and the repo's live-testing
+      // policy keeps those out of CI entirely. It throws the library's own
+      // typed refusals, one per press, and lets the last press through.
+      useTallWindow(tester);
+
+      const List<ss.SmartschoolAuthenticationError> refusals =
+          <ss.SmartschoolAuthenticationError>[
+        ss.SmartschoolInvalidCredentialsError(),
+        ss.SmartschoolTwoFactorRequiredError(),
+        ss.SmartschoolTwoFactorRejectedError(),
+        ss.SmartschoolInvalidTotpSecretError(),
+        ss.SmartschoolUnsupportedTwoFactorMethodError(<String>['sms']),
+        ss.SmartschoolAccountVerificationRequiredError(),
+        ss.SmartschoolAccountVerificationRejectedError(),
+      ];
+      final List<Object?> answers = <Object?>[...refusals, null];
+      final List<String> probedHosts = <String>[];
+
+      const AppSettings base = AppSettings();
+      final InMemorySettingsStore shared = InMemorySettingsStore(
+        base.copyWith(
+          smartschool: base.smartschool.copyWith(uri: 'arcadia'),
+        ),
+      );
+      final LiveSettings live = LiveSettings();
+
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: InMemoryJournalStore(),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'balie-467',
+        settings: live,
+        writerFor: (_, __) => _RecordingPresenceWriter(),
+        signInProbe: (SmartschoolOperatorLogin login, String host) async {
+          probedHosts.add(host);
+          final Object? refused = answers.removeAt(0);
+          if (refused != null) throw refused;
+        },
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        settingsBootstrap: () async => SettingsServices(
+          store: shared,
+          secrets: InMemorySecretProvider(const {}),
+          liveSettings: live,
+        ),
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Instellingen'));
+      await tester.pumpAndSettle();
+      await openLateArrivalSettingsTab(tester);
+
+      final Finder testButton =
+          find.byKey(const ValueKey('settings-smartschool-operator-test'));
+      final Finder status =
+          find.byKey(const ValueKey('settings-smartschool-operator-status'));
+      Future<Text> press() async {
+        await tester.ensureVisible(testButton);
+        await tester.pumpAndSettle();
+        await tester.tap(testButton);
+        await tester.pumpAndSettle();
+        return tester.widget<Text>(status);
+      }
+
+      final List<String> operatorLines = <String>[];
+      for (final ss.SmartschoolAuthenticationError refused in refusals) {
+        final String type = '${refused.runtimeType}';
+        final Text line = await press();
+        final List<String> lines = line.data!.split('\n');
+        operatorLines.add(lines.first);
+        // The operator's line: the cause, in the words the queue panel uses —
+        // not the type name, and none of the library's English.
+        expect(lines.first, describeRefusedSmartschoolSignIn(refused),
+            reason: type);
+        expect(lines.first, isNot(contains(type)));
+        expect(lines.first, isNot(contains(refused.message)));
+        // Still not a connection failure: the #455 wording is for a
+        // Smartschool that was never reached, and this one answered.
+        expect(lines.first, isNot(contains('niet verstuurd')), reason: type);
+        // The library's own words, for whoever is asked to fix it, below.
+        expect(lines.skip(1).join('\n'), '$refused', reason: type);
+        // Reported as the failure it is, in the error colour.
+        expect(
+          line.style?.color,
+          Theme.of(tester.element(status)).colorScheme.error,
+          reason: type,
+        );
+      }
+
+      // The wrong password, word for word, as the operator at the desk reads
+      // it — and seven causes, seven different sentences.
+      expect(
+        operatorLines.first,
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.',
+      );
+      expect(operatorLines.toSet(), hasLength(refusals.length));
+
+      // Once the login is right, the refusal is gone from the line.
+      final Text fixed = await press();
+      expect(fixed.data, contains('is gelukt'));
+      expect(fixed.data, isNot(contains('aanvaardde')));
+      expect(
+        fixed.style?.color,
+        isNot(Theme.of(tester.element(status)).colorScheme.error),
+      );
+      expect(probedHosts, hasLength(refusals.length + 1));
+      expect(probedHosts.toSet(), <String>{'arcadia.smartschool.be'});
+
+      // Unmount before letting go of the desk, so the scope is not listening to a
+      // disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
         'the Te laat tab scans a card, refuses a second scan while the first '
         'student is unconfirmed, and registers on a reason button — journal on '
         'disk before ticket on paper (#407)', (WidgetTester tester) async {

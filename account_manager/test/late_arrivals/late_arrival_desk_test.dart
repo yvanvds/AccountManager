@@ -732,10 +732,12 @@ void main() {
     });
 
     test(
-        'a wrong password still shows the library\'s own authentication '
-        'message, unchanged (#455)', () async {
-      // The diagnostic the button exists for. The connection wording below
-      // must not swallow it.
+        'a wrong password says so in Dutch, with the library\'s own text on '
+        'the line below (#467)', () async {
+      // The diagnostic the button exists for. Until #467 it came back as the
+      // library's `toString()` — `SmartschoolInvalidCredentialsError: Login
+      // failed. …` — on the one screen the operator is sent to to check the
+      // login. The connection wording below must not swallow it either.
       const ss.SmartschoolInvalidCredentialsError refused =
           ss.SmartschoolInvalidCredentialsError();
       final desk = deskWith(
@@ -743,7 +745,61 @@ void main() {
         signInProbe: (_, __) async => throw refused,
       );
       await desk.start();
-      expect(await desk.testSignIn(login), '$refused');
+      expect(
+        await desk.testSignIn(login),
+        'Smartschool aanvaardde de gebruikersnaam of het wachtwoord niet.\n'
+        '$refused',
+      );
+      desk.dispose();
+    });
+
+    test(
+        'every login Smartschool refuses names its cause in the queue panel\'s '
+        'Dutch, never a Dart type name, and keeps the library\'s text on the '
+        'line below (#467)', () async {
+      // One wording of a refused login across the app: the sentence the
+      // desk's queue panel shows while the drain is stood down over the same
+      // refusal (#464, #466).
+      const List<ss.SmartschoolAuthenticationError> refusals =
+          <ss.SmartschoolAuthenticationError>[
+        ss.SmartschoolInvalidCredentialsError(),
+        ss.SmartschoolTwoFactorRequiredError(),
+        ss.SmartschoolTwoFactorRejectedError(),
+        ss.SmartschoolInvalidTotpSecretError(),
+        ss.SmartschoolUnsupportedTwoFactorMethodError(<String>['sms']),
+        ss.SmartschoolAccountVerificationRequiredError(),
+        ss.SmartschoolAccountVerificationRejectedError(),
+      ];
+      for (final ss.SmartschoolAuthenticationError refused in refusals) {
+        final String type = '${refused.runtimeType}';
+        final desk = deskWith(
+          settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+          signInProbe: (_, __) async => throw refused,
+        );
+        await desk.start();
+        final List<String> lines = (await desk.testSignIn(login))!.split('\n');
+        expect(lines.first, describeRefusedSmartschoolSignIn(refused),
+            reason: type);
+        expect(lines.first, isNot(contains(type)));
+        expect(lines.first, isNot(contains(refused.message)));
+        expect(lines.skip(1).join('\n'), '$refused', reason: type);
+        desk.dispose();
+      }
+    });
+
+    test(
+        'an authentication error that is not a refused login keeps its own '
+        'text (#467)', () async {
+      // A session Smartschool stopped accepting is not the operator's
+      // password, and no Dutch sentence about the password may claim it is.
+      const ss.SmartschoolSessionExpiredError expired =
+          ss.SmartschoolSessionExpiredError();
+      final desk = deskWith(
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        signInProbe: (_, __) async => throw expired,
+      );
+      await desk.start();
+      expect(await desk.testSignIn(login), '$expired');
       desk.dispose();
     });
 

@@ -367,9 +367,10 @@ class LateArrivalDesk extends ChangeNotifier {
   ///
   /// Returns `null` when the login worked, and the failure text otherwise —
   /// including for a build with no probe wired, which is a state to report
-  /// rather than an exception to throw. A login Smartschool refused keeps the
-  /// library's own wording; a Smartschool that could not be reached is told
-  /// apart from it, in Dutch, naming the host (#455) — see
+  /// rather than an exception to throw. A login Smartschool refused names its
+  /// cause in Dutch (#467); a Smartschool that could not be reached is told
+  /// apart from it, in Dutch, naming the host (#455). Either way the library's
+  /// own text follows on the next line — see
   /// [describeSmartschoolSignInFailure].
   ///
   /// [host] defaults to the configured site; Instellingen passes the URI *as
