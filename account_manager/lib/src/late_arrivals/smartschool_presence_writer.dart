@@ -289,7 +289,12 @@ String describeRefusedChange(ss.SmartschoolPresenceChangeRefusedError error) {
 /// unchanged by [classifyPresenceFailure] so that the drain retries them:
 ///
 /// - a [ss.SmartschoolPresenceUnreadableAnswerError] (#461) — an empty answer,
-///   an HTML page or broken JSON, such as a proxy's 502;
+///   an HTML page or broken JSON, such as a proxy's 502; or, since
+///   dartschool#143 (#468), JSON with an HTTP error status, such as a `500`
+///   with `{"message": "Internal Server Error"}`. Each kind is worded on its
+///   own ([describeUnreadablePresenceAnswer]): an error status is an answer
+///   Smartschool *did* give, and calling it unreadable would send whoever
+///   opens **Details** looking for a broken page that is not there;
 /// - a [ss.SmartschoolConnectionError] (#455) — Smartschool was never reached.
 ///   The sentence points at **Aanmelding testen** for when trying again does
 ///   not help: that test tells an unplugged network from a certificate this
@@ -325,11 +330,11 @@ String describePresenceFailure(Object error) {
       ? '$refusedLogin Pas de aanmelding aan bij Instellingen → Te laat, test '
           'ze met Aanmelding testen en probeer daarna opnieuw.'
       : switch (error) {
-          ss.SmartschoolPresenceUnreadableAnswerError(:final int? statusCode) =>
-            'Smartschool gaf een antwoord dat niet gelezen kon worden'
-                '${statusCode == null ? '' : ' (HTTP $statusCode)'}. Meestal '
-                'is Smartschool dan even niet bereikbaar; probeer opnieuw '
-                'zodra het weer werkt.',
+          ss.SmartschoolPresenceUnreadableAnswerError(
+            :final ss.PresenceUnreadableAnswerKind kind,
+            :final int? statusCode,
+          ) =>
+            describeUnreadablePresenceAnswer(kind, statusCode),
           ss.SmartschoolConnectionError() =>
             'Smartschool was niet bereikbaar vanaf deze computer. Probeer '
                 'opnieuw zodra de netwerkverbinding in orde is; lukt het dan '
@@ -337,6 +342,37 @@ String describePresenceFailure(Object error) {
           _ => null,
         };
   return sentence == null ? '$error' : '$sentence\n$error';
+}
+
+/// The operator's sentence for a Presence answer the library would not take as
+/// the module's (#461, #468), by what was wrong with it, and its HTTP status
+/// when known.
+///
+/// Every kind ends in the same advice, because the drain retries every kind
+/// and the operator's choice is the same: Smartschool was not itself for a
+/// while. What differs is the first half. An empty answer, an HTML page and
+/// broken JSON could not be read. An answer of the kind `errorStatus`
+/// (dartschool#143) could: it is JSON, such as
+/// `{"message": "Internal Server Error"}` with a `500`, that the library does
+/// not read as Presence data because of its status.
+///
+/// Exhaustive on purpose. A kind that a later `flutter_smartschool` adds is a
+/// compile error here, not a sentence about the wrong failure on the desk.
+String describeUnreadablePresenceAnswer(
+  ss.PresenceUnreadableAnswerKind kind,
+  int? statusCode,
+) {
+  final String status = statusCode == null ? '' : ' (HTTP $statusCode)';
+  final String what = switch (kind) {
+    ss.PresenceUnreadableAnswerKind.empty ||
+    ss.PresenceUnreadableAnswerKind.html ||
+    ss.PresenceUnreadableAnswerKind.malformedJson =>
+      'Smartschool gaf een antwoord dat niet gelezen kon worden$status.',
+    ss.PresenceUnreadableAnswerKind.errorStatus =>
+      'Smartschool antwoordde met een foutmelding$status.',
+  };
+  return '$what Meestal is Smartschool dan even niet bereikbaar; probeer '
+      'opnieuw zodra het weer werkt.';
 }
 
 /// The library's name for a half-day (#428). Exhaustive, so a third value on
@@ -387,9 +423,9 @@ ss.DayPart dayPartOf(HalfDay part) => switch (part) {
 ///   capped re-authentications on an unplugged cable before it fell through to
 ///   the backoff it should have started with. And a
 ///   [ss.SmartschoolPresenceUnreadableAnswerError] (#461): an answer that was
-///   empty, an HTML page or broken JSON, such as a proxy's 502. It is a
-///   [ss.SmartschoolPresenceError] too, but not a refusal; see the reasoning
-///   at its branch below.
+///   empty, an HTML page or broken JSON, such as a proxy's 502, or (#468)
+///   JSON with an HTTP error status. It is a [ss.SmartschoolPresenceError]
+///   too, but not a refusal; see the reasoning at its branch below.
 ///
 /// Until 0.3.0 the library reported an HTML answer in one sentence for two
 /// causes ("the session may have expired, **or** the account lacks Presence
@@ -429,6 +465,16 @@ Object classifyPresenceFailure(Object error) {
     // no — its refusals come as JSON (`errors[]`) or as the typed checks below
     // — but whatever stood between the desk and the module: a proxy's 502, a
     // 503 during maintenance, an answer cut off. Retry it (#461).
+    //
+    // Since dartschool#143 also JSON with an error status (`errorStatus`): a
+    // `500` with `{"message": "Internal Server Error"}`. Before, the library
+    // read that body as the module's answer. A `getConfig` answered so gave
+    // a config without classes, the save then failed as a class "not among
+    // the classes this account may record presences for", and that plain
+    // `SmartschoolPresenceError` fell through to a rejection below (#468).
+    // The one such answer that is still a refusal never reaches this branch:
+    // a save answered with the module's own `errors[]`, whatever its status,
+    // stays a plain `SmartschoolPresenceError` with those errors.
     //
     // Every kind and every status, the `200` and `500` HTML pages included.
     // Smartschool's generic error page is also how the module answers a

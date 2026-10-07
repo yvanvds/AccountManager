@@ -9,6 +9,8 @@
 /// operator's hands.
 library;
 
+import 'dart:io' show Directory, FileSystemException;
+
 import 'package:account_manager/src/late_arrivals/operator_credentials.dart'
     show describeRefusedSmartschoolSignIn;
 import 'package:account_manager/src/late_arrivals/smartschool_presence_writer.dart';
@@ -16,6 +18,7 @@ import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:late_arrivals/late_arrivals.dart';
 
+import 'fake_presence_module.dart';
 import 'fake_smartschool_client.dart';
 
 class FakeSession implements SmartschoolPresenceSession {
@@ -270,7 +273,8 @@ void main() {
         'endpoint — the save included (#461)', () {
       // Classified on the type alone, never on the message or the status: a
       // `200` HTML page as much as a `504`, and an answer to the save, which
-      // may or may not have landed and is safe to send again.
+      // may or may not have landed and is safe to send again. Every kind, so
+      // also the JSON with an error status of dartschool#143 (#468).
       const List<String> paths = <String>[
         '/Presence/Main/getConfig',
         '/Presence/Code/getAllCodes',
@@ -503,6 +507,166 @@ void main() {
     });
   });
 
+  group('the library\'s own reading of an answer, over a real client (#468)',
+      () {
+    // The tests above hand the writer the library's errors, built by hand.
+    // These let the library build them: a real `SmartschoolClient` and the
+    // real `PresenceService` read what the fake module answers, so a bump of
+    // `flutter_smartschool` that changes which error an answer becomes shows
+    // up here. dartschool#143 did: until 0.3.7 a JSON body with an error status
+    // was read as the module's answer.
+
+    /// The writer the desk builds for an operator, over a real client whose
+    /// requests go to [module].
+    SmartschoolPresenceWriter writerOver(FakePresenceModule module) {
+      final Directory cache =
+          Directory.systemTemp.createTempSync('am-presence-468-');
+      addTearDown(() async {
+        for (final ss.SmartschoolClient client in module.clients) {
+          await client.dispose();
+        }
+        try {
+          cache.deleteSync(recursive: true);
+        } on FileSystemException {
+          // A temp directory left behind is not worth failing a test over.
+        }
+      });
+      return SmartschoolPresenceWriter(
+        LiveSmartschoolPresenceSession(
+          credentials: ss.AppCredentials(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+            mainUrl: 'arcadia.smartschool.be',
+          ),
+          cacheDir: cache.path,
+          createClient: module.createClient,
+        ),
+      );
+    }
+
+    /// The module of [write]'s class, with [write]'s pupil in it.
+    FakePresenceModule moduleOfWrite() =>
+        FakePresenceModule(classGroupId: 298, pupils: <int>[11110]);
+
+    /// Writes once through [writer] and returns what it threw.
+    Future<Object> failureOf(SmartschoolPresenceWriter writer) async {
+      try {
+        await write(writer);
+      } on Object catch (error) {
+        return error;
+      }
+      fail('the write went through');
+    }
+
+    test('the module\'s answers make a write go through', () async {
+      // The fake itself: without this, the failures below could be the fake's.
+      final FakePresenceModule module = moduleOfWrite();
+      await write(writerOver(module));
+      expect(module.saved, <int>[11110]);
+      expect(module.requests, <String>[
+        'POST ${FakePresenceModule.getConfigPath}',
+        'POST ${FakePresenceModule.getAllCodesPath}',
+        'POST ${FakePresenceModule.getClassPath}',
+        'POST ${FakePresenceModule.savePath}',
+      ]);
+    });
+
+    test(
+        'a read answered with an error status and a JSON body is transient: '
+        'the library\'s error comes back unchanged, and the next try reads '
+        'the module afresh', () async {
+      // The answer of the issue. Until dartschool#143, a `getConfig` answered
+      // `500` with `{"message": ...}` gave a config without classes, which the
+      // library cached; the save then failed as a class "not among the
+      // classes this account may record presences for", a plain
+      // `SmartschoolPresenceError`, and the drain gave the registration up at
+      // once. `getAllCodes` and `getClass` are read the same way.
+      for (final String path in <String>[
+        FakePresenceModule.getConfigPath,
+        FakePresenceModule.getAllCodesPath,
+        FakePresenceModule.getClassPath,
+      ]) {
+        final FakePresenceModule module = moduleOfWrite()
+          ..answerNext(path, FakePresenceModule.internalServerError);
+        final SmartschoolPresenceWriter writer = writerOver(module);
+
+        final Object error = await failureOf(writer);
+        expect(
+          error,
+          isA<ss.SmartschoolPresenceUnreadableAnswerError>()
+              .having((ss.SmartschoolPresenceUnreadableAnswerError e) => e.kind,
+                  'kind', ss.PresenceUnreadableAnswerKind.errorStatus)
+              .having(
+                  (ss.SmartschoolPresenceUnreadableAnswerError e) =>
+                      e.statusCode,
+                  'statusCode',
+                  500)
+              .having((ss.SmartschoolPresenceUnreadableAnswerError e) => e.path,
+                  'path', path),
+          reason: path,
+        );
+        expect(classifyPresenceFailure(error), same(error), reason: path);
+        expect(module.saved, isEmpty, reason: path);
+
+        // The drain's next attempt: nothing of the error answer was kept.
+        await write(writer);
+        expect(module.saved, <int>[11110], reason: path);
+        // Never signed in again: every request went to the Presence module.
+        expect(module.requests, everyElement(startsWith('POST /Presence/')),
+            reason: path);
+      }
+    });
+
+    test(
+        'a save answered with an error status and no errors of the module\'s '
+        'is transient, not a confirmed save', () async {
+      // Until dartschool#143 the library found no `errors[]` in such an
+      // answer and returned as from a save that went through: the drain marked
+      // the registration confirmed, and nobody knew whether it had landed.
+      final FakePresenceModule module = moduleOfWrite()
+        ..answerNext(
+          FakePresenceModule.savePath,
+          FakePresenceModule.internalServerError,
+        );
+      final SmartschoolPresenceWriter writer = writerOver(module);
+
+      final Object error = await failureOf(writer);
+      expect(
+        error,
+        isA<ss.SmartschoolPresenceUnreadableAnswerError>()
+            .having((ss.SmartschoolPresenceUnreadableAnswerError e) => e.kind,
+                'kind', ss.PresenceUnreadableAnswerKind.errorStatus)
+            .having((ss.SmartschoolPresenceUnreadableAnswerError e) => e.path,
+                'path', FakePresenceModule.savePath),
+      );
+      expect(classifyPresenceFailure(error), same(error));
+
+      // Sent again, it goes through.
+      await write(writer);
+      expect(module.saved, <int>[11110]);
+    });
+
+    test(
+        'a save the module refuses with its own errors under an error status '
+        'is still a rejection, in the module\'s words', () async {
+      // The one non-2xx JSON answer that stays a refusal after dartschool#143:
+      // asking again gets the same `errors[]`, so the drain gives it up.
+      final FakePresenceModule module = moduleOfWrite()
+        ..answerNext(
+          FakePresenceModule.savePath,
+          FakePresenceModule.refusedSave('Geen schrijfrechten voor deze klas.'),
+        );
+
+      final Object error = await failureOf(writerOver(module));
+      expect(
+        error,
+        isA<PresenceRejected>().having((PresenceRejected e) => e.message,
+            'message', 'Geen schrijfrechten voor deze klas.'),
+      );
+      expect(module.saved, isEmpty);
+    });
+  });
+
   group('an unreadable answer, through the drain (#461)', () {
     // The real drain over the real writer, with only the session faked: the
     // classification above is a contract with the drain, and this is the
@@ -643,7 +807,7 @@ void main() {
     });
 
     test(
-        'every kind of unreadable answer gets the sentence, with or without a '
+        'an HTML page and broken JSON get the same sentence, with or without a '
         'status', () {
       final ss.SmartschoolPresenceUnreadableAnswerError page =
           smartschoolErrorPage(path: '/Presence/Class/savePupilsPresences');
@@ -670,6 +834,68 @@ void main() {
           'Smartschool gaf een antwoord dat niet gelezen kon worden. Meestal',
         ),
       );
+    });
+
+    test(
+        'a JSON answer with an error status is a Dutch sentence of its own, '
+        'with its HTTP status, and the library\'s text on the line below '
+        '(#468)', () {
+      // dartschool#143's kind. Smartschool did answer, readably; it answered
+      // with an error, so the sentence says that rather than "niet gelezen".
+      const ss.SmartschoolPresenceUnreadableAnswerError errorAnswer =
+          ss.SmartschoolPresenceUnreadableAnswerError(
+        'Error status from /Presence/Main/getConfig (HTTP 500): its JSON body '
+        'is not read as an answer of the Presence module.',
+        path: '/Presence/Main/getConfig',
+        kind: ss.PresenceUnreadableAnswerKind.errorStatus,
+        statusCode: 500,
+      );
+      final (String sentence, String detail) =
+          linesOf(describePresenceFailure(errorAnswer));
+      expect(
+        sentence,
+        'Smartschool antwoordde met een foutmelding (HTTP 500). Meestal is '
+        'Smartschool dan even niet bereikbaar; probeer opnieuw zodra het weer '
+        'werkt.',
+      );
+      expect(detail, '$errorAnswer');
+      expect(
+        describeUnreadablePresenceAnswer(
+          ss.PresenceUnreadableAnswerKind.errorStatus,
+          null,
+        ),
+        startsWith('Smartschool antwoordde met een foutmelding. Meestal'),
+      );
+    });
+
+    test(
+        'every kind the library has is worded in Dutch, with the same advice, '
+        'and keeps the library\'s text below it', () {
+      // A kind a later `flutter_smartschool` adds fails to compile in the
+      // describer; this keeps each one's line free of the library's English.
+      for (final ss.PresenceUnreadableAnswerKind kind
+          in ss.PresenceUnreadableAnswerKind.values) {
+        final ss.SmartschoolPresenceUnreadableAnswerError answer =
+            ss.SmartschoolPresenceUnreadableAnswerError(
+          'Unreadable answer from /Presence/Class/getClass (HTTP 503).',
+          path: '/Presence/Class/getClass',
+          kind: kind,
+          statusCode: 503,
+        );
+        final (String sentence, String detail) =
+            linesOf(describePresenceFailure(answer));
+        expect(sentence, startsWith('Smartschool '), reason: '$kind');
+        expect(sentence, contains('(HTTP 503).'), reason: '$kind');
+        expect(
+          sentence,
+          endsWith('Meestal is Smartschool dan even niet bereikbaar; probeer '
+              'opnieuw zodra het weer werkt.'),
+          reason: '$kind',
+        );
+        expect(sentence, isNot(contains('Unreadable')), reason: '$kind');
+        expect(sentence, isNot(contains('Error')), reason: '$kind');
+        expect(detail, '$answer', reason: '$kind');
+      }
     });
 
     test(
