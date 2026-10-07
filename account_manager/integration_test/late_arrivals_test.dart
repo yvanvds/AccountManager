@@ -17,7 +17,10 @@ import 'package:account_manager/src/late_arrivals/operator_credentials.dart';
 import 'package:account_manager/src/late_arrivals/refusal_beep.dart'
     show RefusalBeep;
 import 'package:account_manager/src/late_arrivals/smartschool_presence_writer.dart'
-    show SmartschoolPresenceSession, SmartschoolPresenceWriter;
+    show
+        LiveSmartschoolPresenceSession,
+        SmartschoolPresenceSession,
+        SmartschoolPresenceWriter;
 import 'package:account_manager/src/reconcile/log_buffer.dart'
     show LogBuffer, LogEntry;
 import 'package:account_manager/src/settings/connection_config.dart';
@@ -53,6 +56,7 @@ import 'package:flutter_smartschool/flutter_smartschool.dart' as ss;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import '../test/late_arrivals/fake_presence_module.dart';
 import '../test/reconcile/reconcile_fakes.dart';
 import 'support/e2e_support.dart';
 
@@ -2055,6 +2059,241 @@ void main() {
             find.text('0 IN WACHTRIJ').evaluate().isNotEmpty,
       );
       expect(session.accepted, <int>[12016, 12017]);
+      expect(find.byKey(const ValueKey<String>('late-queue-failed')),
+          findsNothing);
+      expect(
+        textOf(const ValueKey<String>('late-queue-line')),
+        'Alles is naar Smartschool verstuurd.',
+      );
+
+      // Unmount before letting go of the desk, so the scope is not listening to
+      // a disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a Presence answer with an error status and a JSON body is retried, '
+        'not given up at once, and its mislukt line says so in Dutch; a save '
+        'the module refuses under an error status is still given up at once '
+        '(#468)', (WidgetTester tester) async {
+      // The bug, end to end. Smartschool, or a proxy in front of it, answered
+      // `getConfig` with a `500` and `{"message": "Internal Server Error"}`.
+      // Until dartschool#143 the library read that body as the module's
+      // answer: a config without classes, so the save failed as a class "not
+      // among the classes this account may record presences for", and the
+      // desk gave the registration up at once, *mislukt*, after one attempt.
+      //
+      // Unlike the tests above, the error is not built by hand here. The
+      // production writer and the production session run over a real
+      // `SmartschoolClient`, and the library's own `PresenceService` reads
+      // what a fake Presence module answers: only the module, behind the
+      // client's HTTP adapter, is a fake. So the test reads the library's
+      // behaviour, which is what a bump of `flutter_smartschool` changes, and
+      // carries it through the real drain, the journal on a real file and the
+      // queue panel on the real tab. A presence write is a write against the
+      // school's tenant, and the live-testing policy keeps those out of CI.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-468-');
+      addTearDown(() => deleteTempDir(dir));
+      final Directory journalDir =
+          Directory('${dir.path}${Platform.pathSeparator}journaal');
+      final String sessionCache = '${dir.path}${Platform.pathSeparator}sessie';
+
+      // Every attempt at Jonas finds the module's config answered with an
+      // error; Lea's save is refused by the module itself, under a `500`.
+      // After that it answers.
+      const String refusal = 'De afwezigheid kon niet worden opgeslagen.';
+      final FakePresenceModule module = FakePresenceModule()
+        ..answerNext(
+          FakePresenceModule.getConfigPath,
+          FakePresenceModule.internalServerError,
+          times: 5,
+        )
+        ..answerNext(
+          FakePresenceModule.savePath,
+          FakePresenceModule.refusedSave(refusal),
+        );
+      addTearDown(() async {
+        for (final ss.SmartschoolClient client in module.clients) {
+          await client.dispose();
+        }
+      });
+
+      const AppSettings base = AppSettings();
+      final LiveSettings live = LiveSettings(
+        base.copyWith(
+          smartschool:
+              base.smartschool.copyWith(uri: 'https://arcadia.smartschool.be'),
+        ),
+      );
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: live,
+      );
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(journalDir),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'onthaal-468',
+        settings: live,
+        // What `main.dart` builds, `SmartschoolPresenceWriter.forOperator`,
+        // with the client's requests going to the fake module.
+        writerFor: (SmartschoolOperatorLogin login, String host) =>
+            SmartschoolPresenceWriter(
+          LiveSmartschoolPresenceSession(
+            credentials: ss.AppCredentials(
+              username: login.username,
+              password: login.password,
+              mainUrl: host,
+            ),
+            cacheDir: sessionCache,
+            createClient: module.createClient,
+          ),
+        ),
+        // The drain's five attempts, without half a minute of real backoff.
+        drainBackoff: const RetryBackoff(
+          base: Duration(milliseconds: 1),
+          max: Duration(milliseconds: 1),
+        ),
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+        refusalBeep: _CountingRefusalBeep(),
+        ticketTransport: _RecordingTicketTransport(),
+        preferences: LocalPreferences.inMemory(),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      await pumpUntil(
+        tester,
+        'the desk to open its journal and attach the drain',
+        () => desk.ready && desk.draining,
+      );
+
+      String textOf(Key key) => tester.widget<Text>(find.byKey(key)).data ?? '';
+
+      /// Scans [code], picks the first reason, and waits until the drain has
+      /// given it up.
+      Future<LateArrivalRecord> registerGivenUp(
+        String code,
+        String name,
+      ) async {
+        for (final String character in code.split('')) {
+          await tester.sendKeyEvent(
+            _scannerKeys[character]!,
+            character: character,
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(textOf(const ValueKey<String>('late-scan-name')), name);
+        await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+        await tester.pumpAndSettle();
+        // Real file I/O and a real background drain behind the tap (#425):
+        // wait on what happened, never on a frame.
+        await pumpUntil(
+          tester,
+          'the drain to give up on $name',
+          () => desk.journal!.failures
+              .any((LateArrivalRecord r) => r.displayName == name),
+        );
+        return desk.journal!.failures
+            .singleWhere((LateArrivalRecord r) => r.displayName == name);
+      }
+
+      // --- Jonas: the module's config answers a JSON 500, five times. --------
+      final LateArrivalRecord jonas =
+          await registerGivenUp('123456', 'Jonas Peeters');
+      // Retried to the end of the drain's attempts — before #468, one — and
+      // never sent on to the save. No login: the session was never in doubt.
+      expect(module.requestsTo(FakePresenceModule.getConfigPath), 5);
+      expect(module.requestsTo(FakePresenceModule.savePath), 0);
+      expect(
+        textOf(ValueKey<String>('late-queue-failure-${jonas.id}')),
+        'Jonas Peeters, 3MTa — Smartschool antwoordde met een foutmelding '
+        '(HTTP 500). Meestal is Smartschool dan even niet bereikbaar; probeer '
+        'opnieuw zodra het weer werkt.',
+      );
+
+      // --- Lea: the module refuses her save itself, with a 500. --------------
+      final LateArrivalRecord lea =
+          await registerGivenUp('223344', 'Lea Janssens');
+      // Given up after one save: asking again gets the same refusal.
+      expect(module.requestsTo(FakePresenceModule.savePath), 1);
+      expect(
+        textOf(ValueKey<String>('late-queue-failure-${lea.id}')),
+        'Lea Janssens, 3MTa — $refusal',
+      );
+      expect(find.text('2 MISLUKT'), findsOneWidget);
+      expect(module.saved, isEmpty);
+      expect(
+        module.requests,
+        everyElement(startsWith('POST /Presence/')),
+        reason: 'only the Presence module was asked; nobody signed in again',
+      );
+
+      // The library's words for Jonas are one click away, for whoever has to
+      // fix it; the module's own words for Lea are the whole line.
+      Finder details(LateArrivalRecord r) =>
+          find.byKey(ValueKey<String>('late-queue-failure-details-${r.id}'));
+      Finder detail(LateArrivalRecord r) =>
+          find.byKey(ValueKey<String>('late-queue-failure-detail-${r.id}'));
+      expect(details(lea), findsNothing);
+      expect(detail(jonas), findsNothing);
+      await tester.ensureVisible(details(jonas));
+      await tester.pumpAndSettle();
+      await tester.tap(details(jonas));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail(jonas)).data,
+        allOf(
+          startsWith('SmartschoolPresenceUnreadableAnswerError: '),
+          contains(FakePresenceModule.getConfigPath),
+          contains('HTTP 500'),
+        ),
+      );
+
+      // And on disk, under the same record, for whoever reads the journal.
+      final String onDisk = journalDir
+          .listSync()
+          .whereType<File>()
+          .map((File f) => f.readAsStringSync())
+          .join();
+      expect(onDisk, contains('Smartschool antwoordde met een foutmelding'));
+      expect(onDisk, contains(refusal));
+
+      // --- Smartschool answers again; the operator does what it said. --------
+      final Finder retry =
+          find.byKey(const ValueKey<String>('late-queue-retry'));
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await pumpUntil(
+        tester,
+        'both registrations to be confirmed by Smartschool',
+        () =>
+            desk.journal!.byId(jonas.id)!.status ==
+                LateArrivalStatus.confirmed &&
+            desk.journal!.byId(lea.id)!.status == LateArrivalStatus.confirmed &&
+            find.text('0 IN WACHTRIJ').evaluate().isNotEmpty,
+      );
+      expect(module.saved, unorderedEquals(<int>[12016, 12017]));
       expect(find.byKey(const ValueKey<String>('late-queue-failed')),
           findsNothing);
       expect(

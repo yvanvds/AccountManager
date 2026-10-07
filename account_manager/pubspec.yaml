@@ -41,18 +41,47 @@ dependencies:
   # internal `Presence/Class/savePupilsPresences` endpoint can, and this library
   # already implements it (repo `yvanvds/dartschool`).
   #
-  # A git dependency, not a path one, for exactly the reason `plink_design_system`
-  # above is: the library is external to this workspace and lives on a developer
-  # machine, so a `path:` here would resolve locally and fail on every CI runner
-  # and every fresh clone. Pinned to a commit so a push to its `main` cannot
-  # change a build here without a deliberate bump.
+  # The hosted release, pinned exactly (#468). Until 0.3.7 this was a git
+  # dependency pinned to a dartschool commit, because pub.dev lagged behind:
+  # `PresenceService` first appeared in 0.2.9 while pub.dev was at 0.2.6, and
+  # the fixes the Te laat drain was waiting for landed on dartschool's `main`
+  # before any release carried them. 0.3.7 is on pub.dev and carries all of
+  # them, so it comes from there. No caret: the root `pubspec.lock` is not
+  # committed, so `^0.3.7` would let CI or a fresh clone resolve a newer 0.3.x
+  # that nobody read. A new version is a deliberate bump of this line, with what
+  # it brings written below. (0.3.6 has the same code, but pub.dev refused it
+  # over a CHANGELOG.md of more than 256 KB; it was never published.)
   #
-  # Not the hosted release either: pub.dev is at 0.2.6, and `PresenceService` —
-  # the whole reason this is here — first appears in 0.2.9. Switch to a hosted
-  # version once one carrying it is published.
+  # 0.3.7 (dartschool `ec7cc38`, tag `v0.3.7`), taken for dartschool#143 (#468).
+  # A Presence answer with an HTTP status outside 200–299 and a body that *is*
+  # valid JSON — a `500` with `{"message": "Internal Server Error"}`, from
+  # Smartschool or a proxy — was read as the module's answer. A `getConfig`
+  # answered that way gave a config without classes (and cached it), so the save
+  # failed as a class "not among the classes this account may record presences
+  # for": a plain `SmartschoolPresenceError`, which `classifyPresenceFailure`
+  # makes a `PresenceRejected`, and the drain gave the registration up at once
+  # as *mislukt*. A save answered that way read as one that went through. Now
+  # such an answer is a `SmartschoolPresenceUnreadableAnswerError` of the new
+  # kind `PresenceUnreadableAnswerKind.errorStatus` (last in the enum, with
+  # `statusCode` and `path` set), nothing is cached from it, and the drain
+  # retries it like the other unreadable answers (#461);
+  # `describePresenceFailure` has Dutch words for it. One answer stays a refusal
+  # whatever its status: a save answered with the module's own non-empty
+  # `errors[]` is still a plain `SmartschoolPresenceError` with `saveErrors`, a
+  # `PresenceRejected`.
   #
-  # 31aac4c (the `main` merge of dartschool PR #142, past 0.3.5 and not yet
-  # released): the first pin past dartschool#137, which is why it was taken
+  # The same jump brings dartschool#140: `ensureAuthenticated()` now sends its
+  # session check (`GET /course-list/api/v1/courses`) on every call, where it
+  # sent nothing once the client had cached its platform ID. Both callers here,
+  # `LiveSmartschoolPresenceSession.signIn` and **Aanmelding testen**, call it
+  # once on a client they have just made, whose first call sent that request
+  # before too, so nothing changes for them. The rest of the jump
+  # (dartschool#141, the Messages archive folder; the 0.3.6 and 0.3.7 release
+  # commits) is in nothing this app calls. dartschool#137 and #134, which the
+  # pin before took from `main`, are in this release too.
+  #
+  # 31aac4c (the `main` merge of dartschool PR #142, past 0.3.5, the pin
+  # before): the first pin past dartschool#137, which is why it was taken
   # (#461). An answer of the Presence module that cannot be read — an empty
   # body, an HTML page where JSON belongs, JSON that breaks off — now arrives
   # as its own `SmartschoolPresenceUnreadableAnswerError`, still a
@@ -72,7 +101,7 @@ dependencies:
   # The rest of the jump (dartschool#132, #133, #135, #136, #138: Intradesk,
   # lesson content, message folders) is in nothing this app calls.
   #
-  # 0.3.5 (the `main` merge of that release, the pin before): the first pin
+  # 0.3.5 (the `main` merge of that release, a git pin too): the first pin
   # past the fix for dartschool#21, taken for it (#455). Since that fix a request
   # that cannot reach Smartschool at all — the host does not resolve, the
   # connection drops or times out, the TLS handshake fails — throws
@@ -90,10 +119,7 @@ dependencies:
   # "HTML instead of JSON" sentence), the `SmartschoolPresenceError` subtypes,
   # the login cooldown after three failed logins (dartschool#32) and
   # `SmartschoolClient.dispose()`.
-  flutter_smartschool:
-    git:
-      url: https://github.com/yvanvds/dartschool.git
-      ref: 31aac4c55c4540c641191a9ac4f0ba0b129e1a1f
+  flutter_smartschool: 0.3.7
 
   # For the interactive loopback fallback's injectable HTTP client (the token
   # endpoint), shared with the OAuthAuthProvider reused from azure_api.
@@ -143,6 +169,15 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+  # The HTTP client under `flutter_smartschool` (#468), for one test fake:
+  # `test/late_arrivals/fake_presence_module.dart` is the `dio` adapter of a
+  # real `SmartschoolClient`, so the library's own `PresenceService` reads the
+  # answers and throws its own errors, where the other fakes build those errors
+  # by hand. The drain's retry policy rests on which type the library throws for
+  # which answer, and a bump of the library can move that (dartschool#143 did).
+  # The library's own constraint, so this resolves the version the app runs on.
+  dio: ^5.7.0
 
 flutter:
   uses-material-design: true
