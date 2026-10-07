@@ -256,6 +256,323 @@ void main() {
     });
   });
 
+  group('the operator\'s way out of a failure (#460)', () {
+    /// One registration of [uid], given up on with [error] — what the drain
+    /// leaves behind after a refusal.
+    Future<LateArrivalRecord> failedOne(
+      LateArrivalJournal journal,
+      String uid, {
+      DateTime? at,
+      String error = 'Empty response from /Presence/Main/getConfig.',
+    }) async {
+      final LateArrivalRecord record =
+          await register(journal, scanOf(uid), at: at);
+      await journal.markSent(record.id);
+      return journal.markFailed(record.id, error);
+    }
+
+    test(
+        'a requeued failure is queued again — and still is after a reload, '
+        'where the older failed line does not win', () async {
+      final InMemoryJournalStore store = InMemoryJournalStore();
+      final LateArrivalJournal first =
+          await LateArrivalJournal.open(store, now: monday);
+      final LateArrivalRecord failed = await failedOne(first, 'jane.doe');
+      expect(first.failures.map((LateArrivalRecord r) => r.id), [failed.id]);
+
+      final LateArrivalRecord requeued = await first.requeueFailed(failed.id);
+
+      expect(requeued.status, LateArrivalStatus.pending);
+      expect(requeued.error, isNull);
+      expect(requeued.requeuedByOperator, isTrue);
+      expect(first.pending.map((LateArrivalRecord r) => r.id), [failed.id]);
+      expect(first.failures, isEmpty);
+
+      final LateArrivalJournal second =
+          await LateArrivalJournal.open(store, now: monday);
+      final LateArrivalRecord read = second.byId(failed.id)!;
+      expect(read.status, LateArrivalStatus.pending);
+      expect(read.requeuedByOperator, isTrue);
+      expect(second.pending.map((LateArrivalRecord r) => r.id), [failed.id]);
+      expect(second.failures, isEmpty);
+      expect(second.recovery.pendingCount, 1);
+    });
+
+    test('the requeue mark outlives the drain\'s later lines', () async {
+      final InMemoryJournalStore store = InMemoryJournalStore();
+      final LateArrivalJournal first =
+          await LateArrivalJournal.open(store, now: monday);
+      final LateArrivalRecord failed = await failedOne(first, 'jane.doe');
+      await first.requeueFailed(failed.id);
+      await first.markSent(failed.id);
+      await first.markPending(failed.id);
+      await first.markSent(failed.id);
+      await first.markConfirmed(failed.id);
+
+      expect(first.byId(failed.id)!.requeuedByOperator, isTrue);
+      final LateArrivalJournal second =
+          await LateArrivalJournal.open(store, now: monday);
+      expect(second.byId(failed.id)!.status, LateArrivalStatus.confirmed);
+      expect(second.byId(failed.id)!.requeuedByOperator, isTrue);
+    });
+
+    test('the drain itself still cannot walk out of failed', () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord failed = await failedOne(journal, 'jane.doe');
+
+      for (final Future<LateArrivalRecord> Function() drainWrite
+          in <Future<LateArrivalRecord> Function()>[
+        () => journal.markPending(failed.id),
+        () => journal.markSent(failed.id),
+        () => journal.markConfirmed(failed.id),
+      ]) {
+        await expectLater(drainWrite(), throwsA(isA<StateError>()));
+      }
+      expect(
+          LateArrivalStatus.failed.canTransitionTo(LateArrivalStatus.pending),
+          isFalse);
+      expect(journal.byId(failed.id)!.status, LateArrivalStatus.failed);
+    });
+
+    test('only a failed registration can be requeued', () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord queued =
+          await register(journal, scanOf('a.one', accountId: '111111'));
+      final LateArrivalRecord sent =
+          await register(journal, scanOf('b.two', accountId: '222222'));
+      await journal.markSent(sent.id);
+      final LateArrivalRecord confirmed =
+          await register(journal, scanOf('c.three', accountId: '333333'));
+      await journal.markConfirmed(confirmed.id);
+      final LateArrivalRecord handled = await failedOne(journal, 'd.four');
+      await journal.markHandledManually(handled.id);
+
+      for (final String id in <String>[
+        queued.id,
+        sent.id,
+        confirmed.id,
+        handled.id,
+      ]) {
+        await expectLater(
+          journal.requeueFailed(id),
+          throwsA(isA<StateError>()),
+          reason: '${journal.byId(id)!.status.wireName} is not failed',
+        );
+      }
+      await expectLater(
+        journal.requeueFailed('2026-09-07-0099'),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test(
+        'a later scan of the same student and half-day supersedes a failure; '
+        'one of the other half-day does not', () async {
+      final InMemoryJournalStore store = InMemoryJournalStore();
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(store, now: monday);
+      final LateArrivalRecord morning = await failedOne(
+        journal,
+        'jane.doe',
+        at: DateTime(2026, 9, 7, 8, 10),
+      );
+      final LateArrivalRecord afternoon = await register(
+        journal,
+        scanOf('jane.doe'),
+        at: DateTime(2026, 9, 7, 13, 5),
+      );
+      expect(journal.supersededBy(morning), isNull);
+      expect(journal.failures.map((LateArrivalRecord r) => r.id), [morning.id]);
+
+      final LateArrivalRecord correction = await register(
+        journal,
+        scanOf('jane.doe'),
+        at: DateTime(2026, 9, 7, 8, 40),
+      );
+
+      expect(journal.supersededBy(morning)?.id, correction.id);
+      expect(journal.supersededBy(correction), isNull);
+      expect(journal.supersededBy(afternoon), isNull);
+      expect(journal.failures, isEmpty);
+      expect(await journal.requeueFailures(), isEmpty);
+      await expectLater(
+        journal.requeueFailed(morning.id),
+        throwsA(isA<StateError>()),
+      );
+      // Still in the journal, still failed — it simply no longer matters.
+      expect(journal.byId(morning.id)!.status, LateArrivalStatus.failed);
+
+      final LateArrivalJournal reloaded =
+          await LateArrivalJournal.open(store, now: monday);
+      expect(reloaded.failures, isEmpty);
+    });
+
+    test('requeueFailures requeues every failure on the list, in drain order',
+        () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord a = await failedOne(
+        journal,
+        'a.one',
+        at: DateTime(2026, 9, 7, 8, 10),
+      );
+      await register(
+        journal,
+        scanOf('b.two', accountId: '222222'),
+        at: DateTime(2026, 9, 7, 8, 11),
+      );
+      final LateArrivalRecord c = await failedOne(
+        journal,
+        'c.three',
+        at: DateTime(2026, 9, 7, 8, 12),
+      );
+
+      final List<LateArrivalRecord> requeued = await journal.requeueFailures();
+
+      expect(requeued.map((LateArrivalRecord r) => r.id), [a.id, c.id]);
+      expect(journal.failures, isEmpty);
+      expect(
+        journal.pending.map((LateArrivalRecord r) => r.id).toList(),
+        hasLength(3),
+      );
+      expect(journal.pending.first.id, a.id);
+    });
+
+    test(
+        'handled by hand: off the failure list for good, still in the '
+        'journal, and so after a reload', () async {
+      final InMemoryJournalStore store = InMemoryJournalStore();
+      final LateArrivalJournal first =
+          await LateArrivalJournal.open(store, now: monday);
+      final LateArrivalRecord failed =
+          await failedOne(first, 'jane.doe', error: 'geen rechten');
+
+      final LateArrivalRecord handled =
+          await first.markHandledManually(failed.id);
+
+      for (final LateArrivalJournal journal in <LateArrivalJournal>[
+        first,
+        await LateArrivalJournal.open(store, now: monday),
+      ]) {
+        final LateArrivalRecord read = journal.byId(failed.id)!;
+        expect(read.status, LateArrivalStatus.handledManually);
+        expect(read.status.isTerminal, isTrue);
+        // Why it had to be entered by hand stays part of its story.
+        expect(read.error, 'geen rechten');
+        expect(journal.failures, isEmpty);
+        expect(journal.pending, isEmpty);
+        expect(await journal.requeueFailures(), isEmpty);
+        // Never deleted: append-only, and still answerable per student.
+        expect(journal.records.map((LateArrivalRecord r) => r.id), [failed.id]);
+        expect(journal.recordsOf('jane.doe').single.status,
+            LateArrivalStatus.handledManually);
+      }
+      expect(handled.status, LateArrivalStatus.handledManually);
+      expect(await store.read(mondayDay), contains('"handled-manually"'));
+    });
+
+    test(
+        'handled by hand is refused from pending, sent and confirmed, and the '
+        'drain can never write it', () async {
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord queued =
+          await register(journal, scanOf('a.one', accountId: '111111'));
+      final LateArrivalRecord sent =
+          await register(journal, scanOf('b.two', accountId: '222222'));
+      await journal.markSent(sent.id);
+      final LateArrivalRecord confirmed =
+          await register(journal, scanOf('c.three', accountId: '333333'));
+      await journal.markConfirmed(confirmed.id);
+
+      for (final LateArrivalRecord record in <LateArrivalRecord>[
+        queued,
+        sent,
+        confirmed,
+      ]) {
+        final LateArrivalStatus before = journal.byId(record.id)!.status;
+        await expectLater(
+          journal.markHandledManually(record.id),
+          throwsA(isA<StateError>()),
+          reason: '${before.wireName} is not the operator\'s to settle',
+        );
+        expect(journal.byId(record.id)!.status, before);
+      }
+      // The drain's rule: no state at all may walk into it.
+      for (final LateArrivalStatus from in LateArrivalStatus.values) {
+        expect(
+          from.canTransitionTo(LateArrivalStatus.handledManually),
+          isFalse,
+          reason: 'the drain may not record handled-manually from '
+              '${from.wireName}',
+        );
+      }
+      // …and nothing walks back out of it either.
+      final LateArrivalRecord failed = await failedOne(journal, 'd.four');
+      await journal.markHandledManually(failed.id);
+      await expectLater(
+        journal.markHandledManually(failed.id),
+        throwsA(isA<StateError>()),
+      );
+      await expectLater(
+        journal.markPending(failed.id),
+        throwsA(isA<StateError>()),
+      );
+    });
+
+    test('a day settled by hand rolls off after retention like any drained one',
+        () async {
+      final InMemoryJournalStore store = InMemoryJournalStore();
+      final LateArrivalJournal back = await LateArrivalJournal.open(
+        store,
+        now: DateTime(2026, 6, 1, 8, 30),
+      );
+      final LateArrivalRecord failed = await failedOne(
+        back,
+        'a.one',
+        at: DateTime(2026, 6, 1, 8, 30),
+      );
+      final LateArrivalJournal stillFailed =
+          await LateArrivalJournal.open(store, now: DateTime(2026, 6, 1, 9));
+      expect(stillFailed.failures, hasLength(1));
+      await stillFailed.markHandledManually(failed.id);
+
+      final LateArrivalJournal now =
+          await LateArrivalJournal.open(store, now: monday);
+
+      expect(now.recovery.rolledOff, <SchoolDay>[const SchoolDay(2026, 6, 1)]);
+      expect(now.records, isEmpty);
+    });
+
+    test('the operator\'s lines round-trip through the record\'s JSON', () {
+      final LateArrivalRecord? back = LateArrivalRecord.tryFromJson(
+        <String, Object?>{
+          'id': '2026-09-07-0001',
+          'day': '2026-09-07',
+          'seq': 1,
+          'scannedAt': '2026-09-07T08:10:00.000',
+          'uid': 'a.one',
+          'userId': 12016,
+          'groupId': 298,
+          'status': 'handled-manually',
+          'error': 'geen rechten',
+          'requeuedByOperator': true,
+        },
+      );
+      expect(back?.status, LateArrivalStatus.handledManually);
+      expect(back?.error, 'geen rechten');
+      expect(back?.requeuedByOperator, isTrue);
+      expect(back!.toJson()['status'], 'handled-manually');
+      expect(back.toJson()['requeuedByOperator'], isTrue);
+      expect(
+        LateArrivalStatus.tryParse('handled-manually'),
+        LateArrivalStatus.handledManually,
+      );
+    });
+  });
+
   group('recovery', () {
     test('surfaces every non-terminal record for draining, in order', () async {
       final InMemoryJournalStore store = InMemoryJournalStore();

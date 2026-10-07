@@ -20,9 +20,25 @@ enum LateArrivalStatus {
   /// Smartschool acknowledged the presence write. Terminal.
   confirmed('confirmed'),
 
-  /// The registration was given up on, with a reason. Terminal — a *transient*
-  /// failure does not come here, it goes back to [pending] for another attempt.
-  failed('failed');
+  /// The registration was given up on, with a reason. Terminal for the drain —
+  /// a *transient* failure does not come here, it goes back to [pending] for
+  /// another attempt. Only the operator walks a record back out of it (#460):
+  /// to [pending] with **Opnieuw proberen**, or to [handledManually].
+  failed('failed'),
+
+  /// The operator entered this registration in Smartschool by hand after it
+  /// failed, and took it off the desk's list (#460). Terminal: nothing sends
+  /// it, and its day rolls off like any drained day.
+  ///
+  /// Reachable only from [failed] and only by the operator
+  /// (`LateArrivalJournal.markHandledManually`), never by the drain — see
+  /// [canTransitionTo]. The record is not deleted: the journal is append-only,
+  /// and "what happened to this scan" has to stay answerable.
+  ///
+  /// An app version from before this status reads the line as damaged and
+  /// shows the record as [failed] again, which is harmless; reading the shared
+  /// store, it skips the mirrored registration altogether.
+  handledManually('handled-manually');
 
   const LateArrivalStatus(this.wireName);
 
@@ -39,7 +55,9 @@ enum LateArrivalStatus {
 
   /// Whether nothing more will happen to a record in this state.
   bool get isTerminal =>
-      this == LateArrivalStatus.confirmed || this == LateArrivalStatus.failed;
+      this == LateArrivalStatus.confirmed ||
+      this == LateArrivalStatus.failed ||
+      this == LateArrivalStatus.handledManually;
 
   /// Whether the drain worker still owes this record an attempt.
   bool get needsDraining => !isTerminal;
@@ -47,11 +65,18 @@ enum LateArrivalStatus {
   /// Whether [next] is a transition the drain worker is allowed to record.
   ///
   /// Out of a terminal state, nothing is: a confirmed presence cannot un-happen
-  /// and a given-up registration is a decision, not a state to walk out of. The
-  /// requeue [sent] → [pending] *is* allowed, because that is what a transient
-  /// send failure looks like.
+  /// and giving up on a registration is the drain's decision, not a state for
+  /// it to walk out of. The requeue [sent] → [pending] *is* allowed, because
+  /// that is what a transient send failure looks like. [handledManually] is
+  /// never allowed: it is the operator's statement that a student is in
+  /// Smartschool, and the drain has no business making it.
+  ///
+  /// The operator's own two transitions out of [failed] (#460) are checked by
+  /// the journal methods that write them, not here, so this stays the drain's
+  /// rule and stays strict.
   bool canTransitionTo(LateArrivalStatus next) {
     if (isTerminal) return false;
+    if (next == LateArrivalStatus.handledManually) return false;
     return next != this;
   }
 }
@@ -79,6 +104,7 @@ final class LateArrivalRecord implements Comparable<LateArrivalRecord> {
     required this.status,
     this.personId,
     this.error,
+    this.requeuedByOperator = false,
   });
 
   /// Unique within the journal: `<day>-<sequence>`, e.g. `2026-09-07-0003`.
@@ -146,13 +172,34 @@ final class LateArrivalRecord implements Comparable<LateArrivalRecord> {
 
   final LateArrivalStatus status;
 
-  /// Why the registration was given up on. Only ever set alongside
-  /// [LateArrivalStatus.failed].
+  /// Why the registration was given up on. Set alongside
+  /// [LateArrivalStatus.failed], and kept on a record the operator then marked
+  /// [LateArrivalStatus.handledManually] — the reason it had to be entered by
+  /// hand is part of what happened to the scan.
   final String? error;
+
+  /// Whether the operator put this registration back in the queue after the
+  /// drain had given up on it — **Opnieuw proberen** (#460).
+  ///
+  /// It changes what the write may overwrite. A retry can come hours after the
+  /// scan, and by then the half-day may hold something the desk must not
+  /// wipe: an absence the secretariat recorded since. So a requeued record is
+  /// written only over a half-day that holds nothing, a presence or a late
+  /// arrival, and refused otherwise — which lands it back on
+  /// [LateArrivalStatus.failed] with the reason, for the operator to look at.
+  ///
+  /// Sticky once set: a later status line does not clear it.
+  final bool requeuedByOperator;
 
   /// The same record in [next], for the in-memory view after a status line is
   /// appended.
-  LateArrivalRecord withStatus(LateArrivalStatus next, {String? error}) =>
+  ///
+  /// [requeuedByOperator] sets the flag; `null` keeps the record's own.
+  LateArrivalRecord withStatus(
+    LateArrivalStatus next, {
+    String? error,
+    bool? requeuedByOperator,
+  }) =>
       LateArrivalRecord(
         id: id,
         day: day,
@@ -169,7 +216,12 @@ final class LateArrivalRecord implements Comparable<LateArrivalRecord> {
         reasonIsValid: reasonIsValid,
         motivation: motivation,
         status: next,
-        error: next == LateArrivalStatus.failed ? error : null,
+        error: switch (next) {
+          LateArrivalStatus.failed => error,
+          LateArrivalStatus.handledManually => error ?? this.error,
+          _ => null,
+        },
+        requeuedByOperator: requeuedByOperator ?? this.requeuedByOperator,
       );
 
   /// Drain order: by day, then by position within the day. Grouped per student
@@ -199,6 +251,7 @@ final class LateArrivalRecord implements Comparable<LateArrivalRecord> {
         'motivation': motivation,
         'status': status.wireName,
         if (error != null) 'error': error,
+        if (requeuedByOperator) 'requeuedByOperator': true,
       };
 
   /// Reads a registration line back. `null` — never an exception — when a field
@@ -244,6 +297,7 @@ final class LateArrivalRecord implements Comparable<LateArrivalRecord> {
           json['motivation'] is String ? json['motivation']! as String : '',
       status: parsedStatus,
       error: json['error'] is String ? json['error']! as String : null,
+      requeuedByOperator: json['requeuedByOperator'] == true,
     );
   }
 

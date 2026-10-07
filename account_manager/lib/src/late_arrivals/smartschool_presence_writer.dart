@@ -37,6 +37,11 @@ import 'package:late_arrivals/late_arrivals.dart';
 abstract interface class SmartschoolPresenceSession {
   /// Writes the presence for the [part] half-day. Throws the library's own
   /// exception types.
+  ///
+  /// [onlyReplacing] is the library's own guard, passed straight through:
+  /// `null` overwrites whatever the half-day holds; a set of status names
+  /// refuses any other with a [ss.SmartschoolPresenceChangeRefusedError] and
+  /// sends nothing.
   Future<void> setLate({
     required int userId,
     required int classGroupId,
@@ -44,6 +49,7 @@ abstract interface class SmartschoolPresenceSession {
     required ss.DayPart part,
     required bool withoutValidReason,
     required String motivation,
+    Set<String>? onlyReplacing,
   });
 
   /// Drops the current session and signs in again.
@@ -89,6 +95,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
     required ss.DayPart part,
     required bool withoutValidReason,
     required String motivation,
+    Set<String>? onlyReplacing,
   }) async {
     final ss.PresenceService service = await _service();
     await service.setLate(
@@ -98,6 +105,7 @@ class LiveSmartschoolPresenceSession implements SmartschoolPresenceSession {
       part: part,
       withoutValidReason: withoutValidReason,
       motivation: motivation,
+      onlyReplacing: onlyReplacing,
     );
   }
 
@@ -166,6 +174,7 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
     required HalfDay part,
     required bool withoutValidReason,
     required String motivation,
+    bool keepRecordedAbsence = false,
   }) async {
     try {
       await session.setLate(
@@ -175,6 +184,7 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
         part: dayPartOf(part),
         withoutValidReason: withoutValidReason,
         motivation: motivation,
+        onlyReplacing: keepRecordedAbsence ? requeuedWriteMayReplace : null,
       );
     } on Object catch (error) {
       throw classifyPresenceFailure(error);
@@ -183,6 +193,45 @@ class SmartschoolPresenceWriter implements LatePresenceWriter {
 
   @override
   Future<void> reauthenticate() => session.signIn();
+}
+
+/// What the write of a registration the operator requeued may overwrite
+/// (#460): a half-day that holds nothing, a presence, or a late arrival with or
+/// without a valid reason.
+///
+/// A requeued write can come hours after the scan. Anything else the half-day
+/// holds by then — an absence the secretariat recorded, a student sent home —
+/// was put there by somebody since, and wiping it would be silent. The library
+/// refuses it before sending anything, which the drain records as *mislukt*
+/// with [describeRefusedChange]'s sentence, so the operator looks at it. A
+/// "Te laat" entered by hand in the meantime *may* be replaced: the scan says
+/// the same thing, with the exact arrival time in the motivation.
+const Set<String> requeuedWriteMayReplace = <String>{
+  ss.PresenceService.nothingRecorded,
+  ss.PresenceService.presentCodeName,
+  ss.PresenceService.lateCodeName,
+  ss.PresenceService.lateWithoutReasonAliasName,
+};
+
+/// The operator's sentence for a write the library refused because the
+/// half-day held a status it was not allowed to replace (#460).
+///
+/// Dutch rather than the library's own English, because this one is not a
+/// fault to forward to whoever maintains the app: it is the desk's own guard
+/// doing its job, and the operator is the one who has to act on it.
+String describeRefusedChange(ss.SmartschoolPresenceChangeRefusedError error) {
+  final String part = switch (error.part) {
+    ss.DayPart.morning => 'voormiddag',
+    ss.DayPart.afternoon => 'namiddag',
+  };
+  final String? heldStatus = error.heldStatus;
+  final String held = heldStatus == null || heldStatus.isEmpty
+      ? 'een andere registratie'
+      : '"$heldStatus"';
+  return 'In Smartschool staat voor de $part van ${error.date} al $held. Die '
+      'is niet overschreven. Kijk na of deze leerling nog als te laat '
+      'ingevoerd moet worden, en duid de registratie daarna aan als manueel '
+      'ingevoerd.';
 }
 
 /// The library's name for a half-day (#428). Exhaustive, so a third value on
@@ -239,6 +288,12 @@ Object classifyPresenceFailure(Object error) {
   }
   if (error is ss.SmartschoolAuthenticationError) {
     return PresenceSessionExpired(error.message);
+  }
+  if (error is ss.SmartschoolPresenceChangeRefusedError) {
+    // The `onlyReplacing` guard a requeued write carries (#460): the half-day
+    // holds something recorded since the scan. Terminal like any refusal, but
+    // in the operator's words, because the operator is who acts on it.
+    return PresenceRejected(describeRefusedChange(error));
   }
   if (error is ss.SmartschoolPresenceError) {
     // The server's `errors[]` when it rejected the save, the client-side

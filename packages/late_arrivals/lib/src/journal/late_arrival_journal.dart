@@ -171,6 +171,43 @@ class LateArrivalJournal {
 
   LateArrivalRecord? byId(String id) => _byId[id];
 
+  /// The given-up registrations the operator still has to deal with, in drain
+  /// order: every [LateArrivalStatus.failed] record that is not
+  /// [supersededBy] a later scan (#460).
+  ///
+  /// This is the desk's *mislukt* list, and exactly what **Opnieuw proberen**
+  /// requeues ([requeueFailures]). A superseded failure is left out of both:
+  /// a presence save overwrites the half-day cell, so a later scan of the same
+  /// student for the same half-day decides what Smartschool holds, whatever
+  /// became of the earlier one — and sending the earlier one again could only
+  /// undo it.
+  List<LateArrivalRecord> get failures => List<LateArrivalRecord>.unmodifiable(
+        _records.where(
+          (LateArrivalRecord r) =>
+              r.status == LateArrivalStatus.failed && supersededBy(r) == null,
+        ),
+      );
+
+  /// The later registration of the same student, for the same day and
+  /// half-day, that makes [record] moot — or `null` when there is none.
+  ///
+  /// "Later" is drain order, which is scan order, whatever the later record's
+  /// status: confirmed, it already stands in Smartschool; still queued, it
+  /// will be written after anything requeued now; failed or handled by hand,
+  /// it is the one the operator deals with. In every case the earlier scan is
+  /// not worth sending (#399, #460).
+  LateArrivalRecord? supersededBy(LateArrivalRecord record) {
+    for (final LateArrivalRecord other in _records.reversed) {
+      if (other.compareTo(record) <= 0) return null;
+      if (other.smartschoolUid == record.smartschoolUid &&
+          other.day == record.day &&
+          other.halfDay == record.halfDay) {
+        return other;
+      }
+    }
+    return null;
+  }
+
   /// Appends one registration and completes **only once it is on disk**.
   ///
   /// Print the ticket and free the scanner input after this future resolves,
@@ -246,6 +283,85 @@ class LateArrivalJournal {
   Future<LateArrivalRecord> markFailed(String id, String error) =>
       _transition(id, LateArrivalStatus.failed, error: error);
 
+  /// Puts the given-up registration [id] back in the queue — the operator's
+  /// **Opnieuw proberen** (#460). The drain then sends it again, in its own
+  /// place in drain order.
+  ///
+  /// An operator transition, written as an ordinary status line so a reload
+  /// replays it: [LateArrivalStatus.canTransitionTo] stays strict, because
+  /// giving up remains the drain's decision and only the operator may undo it.
+  /// The record is marked [LateArrivalRecord.requeuedByOperator], which keeps
+  /// its write from overwriting anything but nothing, a presence or a late
+  /// arrival.
+  ///
+  /// Throws [StateError] unless [id] is [LateArrivalStatus.failed], and for a
+  /// failure [supersededBy] a later scan: sending that one again would
+  /// overwrite the later scan's half-day.
+  Future<LateArrivalRecord> requeueFailed(String id) async {
+    final LateArrivalRecord held = _require(id);
+    if (held.status != LateArrivalStatus.failed) {
+      throw StateError(
+        'Registratie "$id" staat op ${held.status.wireName}; alleen een '
+        'mislukte registratie kan opnieuw in de wachtrij.',
+      );
+    }
+    final LateArrivalRecord? newer = supersededBy(held);
+    if (newer != null) {
+      throw StateError(
+        'Registratie "$id" is vervangen door de latere scan "${newer.id}" en '
+        'wordt niet opnieuw verstuurd.',
+      );
+    }
+    return _append(
+      held,
+      LateArrivalStatus.pending,
+      requeuedByOperator: true,
+    );
+  }
+
+  /// Requeues every one of [failures] — what **Opnieuw proberen** does — and
+  /// returns them, requeued, in drain order.
+  ///
+  /// One at a time, each durably on disk before the next: a write that fails
+  /// throws, and leaves the records before it requeued and the rest failed,
+  /// which is exactly what the journal then says. A record that stopped being
+  /// one of [failures] while the earlier ones were written — a scan of the
+  /// same student came in, the operator settled it by hand — is skipped.
+  Future<List<LateArrivalRecord>> requeueFailures() async {
+    final List<LateArrivalRecord> requeued = <LateArrivalRecord>[];
+    for (final LateArrivalRecord listed in failures) {
+      final LateArrivalRecord? now = _byId[listed.id];
+      if (now == null ||
+          now.status != LateArrivalStatus.failed ||
+          supersededBy(now) != null) {
+        continue;
+      }
+      requeued.add(await requeueFailed(now.id));
+    }
+    return requeued;
+  }
+
+  /// Records that the operator entered the failed registration [id] in
+  /// Smartschool by hand (#460): it leaves the desk's *mislukt* list and is
+  /// never sent. Terminal.
+  ///
+  /// Like [requeueFailed], an operator transition the drain cannot make. The
+  /// record stays in the journal, with the error it failed on, so "what
+  /// happened to this scan" stays answerable.
+  ///
+  /// Throws [StateError] unless [id] is [LateArrivalStatus.failed]: a record
+  /// that is still queued, sent or confirmed is not the operator's to settle.
+  Future<LateArrivalRecord> markHandledManually(String id) async {
+    final LateArrivalRecord held = _require(id);
+    if (held.status != LateArrivalStatus.failed) {
+      throw StateError(
+        'Registratie "$id" staat op ${held.status.wireName}; alleen een '
+        'mislukte registratie kan als manueel ingevoerd aangeduid worden.',
+      );
+    }
+    return _append(held, LateArrivalStatus.handledManually);
+  }
+
   /// Appends a status line, durably, then updates the in-memory view.
   ///
   /// Throws [StateError] for an unknown id or a transition out of a terminal
@@ -257,10 +373,7 @@ class LateArrivalJournal {
     LateArrivalStatus next, {
     String? error,
   }) async {
-    final LateArrivalRecord? held = _byId[id];
-    if (held == null) {
-      throw StateError('Geen registratie met id "$id" in het journaal.');
-    }
+    final LateArrivalRecord held = _require(id);
     if (held.status == next && next != LateArrivalStatus.failed) return held;
     if (!held.status.canTransitionTo(next)) {
       throw StateError(
@@ -268,19 +381,43 @@ class LateArrivalJournal {
         '${next.wireName}.',
       );
     }
+    return _append(held, next, error: error);
+  }
 
+  LateArrivalRecord _require(String id) {
+    final LateArrivalRecord? held = _byId[id];
+    if (held == null) {
+      throw StateError('Geen registratie met id "$id" in het journaal.');
+    }
+    return held;
+  }
+
+  /// Writes the status line for [held] → [next] — disk first, memory second,
+  /// the sink last — whoever decided on it.
+  Future<LateArrivalRecord> _append(
+    LateArrivalRecord held,
+    LateArrivalStatus next, {
+    String? error,
+    bool requeuedByOperator = false,
+  }) async {
     await _store.append(
         held.day,
         _encode(<String, Object?>{
           'kind': _statusKind,
-          'id': id,
+          'id': held.id,
           'status': next.wireName,
           if (error != null) 'error': error,
+          if (requeuedByOperator) 'requeuedByOperator': true,
         }));
 
-    final LateArrivalRecord updated = held.withStatus(next, error: error);
-    _byId[id] = updated;
-    final int index = _records.indexWhere((LateArrivalRecord r) => r.id == id);
+    final LateArrivalRecord updated = held.withStatus(
+      next,
+      error: error,
+      requeuedByOperator: requeuedByOperator ? true : null,
+    );
+    _byId[held.id] = updated;
+    final int index =
+        _records.indexWhere((LateArrivalRecord r) => r.id == held.id);
     if (index >= 0) _records[index] = updated;
     _sink?.onRecord(updated);
     return updated;
@@ -365,6 +502,10 @@ class LateArrivalJournal {
           byId[id] = held.withStatus(
             status,
             error: json['error'] is String ? json['error']! as String : null,
+            // Sticky: the operator's requeue line sets it, and the drain's
+            // later lines for the same record leave it alone.
+            requeuedByOperator:
+                json['requeuedByOperator'] == true ? true : null,
           );
         default:
           damagedLines++;

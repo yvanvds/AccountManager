@@ -31,8 +31,10 @@ final class LateArrivalDrainStatus {
   /// versturen".
   final int outstanding;
 
-  /// Registrations that were given up on and are still on the day's journal.
-  /// Non-zero is always worth showing: nothing will retry these on its own.
+  /// Registrations that were given up on and are still on the journal —
+  /// [LateArrivalJournal.failures]: not settled by hand, and not superseded by
+  /// a later scan (#460). Non-zero is always worth showing: nothing will retry
+  /// these on its own.
   final int failed;
 
   /// Failed attempts since the last accepted write, across records.
@@ -184,11 +186,9 @@ class LateArrivalDrain implements LateArrivalRecordSink {
   ///
   /// Kept addressable rather than merely counted: "twee mislukt" is not
   /// actionable, "Jonas Peeters, 3MTa — deze klas hoort niet bij dit account"
-  /// is (#407).
-  List<LateArrivalRecord> get failures => <LateArrivalRecord>[
-        for (final LateArrivalRecord r in _journal.records)
-          if (r.status == LateArrivalStatus.failed) r,
-      ];
+  /// is (#407). The journal's own list ([LateArrivalJournal.failures]), so the
+  /// count here and the lines on the desk are the same records (#460).
+  List<LateArrivalRecord> get failures => _journal.failures;
 
   /// Starts draining whatever the journal already holds.
   ///
@@ -226,8 +226,13 @@ class LateArrivalDrain implements LateArrivalRecordSink {
     unawaited(_pump());
   }
 
-  /// Picks the queue back up after the worker stood down — the operator's
-  /// "opnieuw proberen". A no-op when there is nothing left to send.
+  /// Picks the queue back up after the worker stood down. A no-op when there
+  /// is nothing left to send.
+  ///
+  /// It sends what is *queued*. A record the worker gave up on is not queued
+  /// — [LateArrivalStatus.failed] is terminal for the drain — so the
+  /// operator's **Opnieuw proberen** first requeues those through
+  /// [LateArrivalJournal.requeueFailures] and then calls this (#460).
   void retryNow() {
     if (_closed) return;
     _degraded = false;
@@ -304,6 +309,9 @@ class LateArrivalDrain implements LateArrivalRecordSink {
           part: record.halfDay,
           withoutValidReason: !record.reasonIsValid,
           motivation: record.motivation,
+          // A retry the operator asked for may come hours after the scan;
+          // it must not wipe an absence recorded in the meantime (#460).
+          keepRecordedAbsence: record.requeuedByOperator,
         );
       } on PresenceRejected catch (error) {
         // The server's answer will not change; keep its wording and move on.

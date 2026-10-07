@@ -23,6 +23,7 @@ class FakeSession implements SmartschoolPresenceSession {
   ss.DayPart? lastPart;
   bool? lastWithoutValidReason;
   String? lastMotivation;
+  Set<String>? lastOnlyReplacing;
 
   @override
   Future<void> setLate({
@@ -32,12 +33,14 @@ class FakeSession implements SmartschoolPresenceSession {
     required ss.DayPart part,
     required bool withoutValidReason,
     required String motivation,
+    Set<String>? onlyReplacing,
   }) async {
     calls++;
     lastDate = date;
     lastPart = part;
     lastWithoutValidReason = withoutValidReason;
     lastMotivation = motivation;
+    lastOnlyReplacing = onlyReplacing;
     final Object? error = failure;
     if (error != null) throw error;
   }
@@ -49,6 +52,7 @@ class FakeSession implements SmartschoolPresenceSession {
 Future<void> write(
   SmartschoolPresenceWriter writer, {
   HalfDay part = HalfDay.morning,
+  bool keepRecordedAbsence = false,
 }) =>
     writer.setLate(
       userId: 11110,
@@ -57,6 +61,7 @@ Future<void> write(
       part: part,
       withoutValidReason: false,
       motivation: '08:14 – Bus te laat',
+      keepRecordedAbsence: keepRecordedAbsence,
     );
 
 void main() {
@@ -76,6 +81,30 @@ void main() {
       final FakeSession session = FakeSession();
       await write(SmartschoolPresenceWriter(session), part: HalfDay.afternoon);
       expect(session.lastPart, ss.DayPart.afternoon);
+    });
+
+    test(
+        'a first send overwrites whatever the half-day holds, as it always did',
+        () async {
+      final FakeSession session = FakeSession();
+      await write(SmartschoolPresenceWriter(session));
+      expect(session.lastOnlyReplacing, isNull);
+    });
+
+    test(
+        'a requeued send may only replace nothing, a presence or a late '
+        'arrival (#460)', () async {
+      // Opnieuw proberen can come hours after the scan; an absence the
+      // secretariat recorded since must not be wiped by it.
+      final FakeSession session = FakeSession();
+      await write(SmartschoolPresenceWriter(session),
+          keepRecordedAbsence: true);
+      expect(session.lastOnlyReplacing, <String>{
+        ss.PresenceService.nothingRecorded,
+        ss.PresenceService.presentCodeName,
+        ss.PresenceService.lateCodeName,
+        ss.PresenceService.lateWithoutReasonAliasName,
+      });
     });
 
     test('maps every half-day onto the library\'s own value', () {
@@ -190,6 +219,43 @@ void main() {
           ),
         ),
       );
+    });
+
+    test(
+        'a requeued write the half-day refuses is terminal, in the operator\'s '
+        'own words (#460)', () async {
+      // What the library throws when the guard a requeued write carries finds
+      // an absence recorded since the scan. Nothing was sent; the operator has
+      // to look at it, so the line says what is there and what to do.
+      final FakeSession session = FakeSession(
+        failure: const ss.SmartschoolPresenceChangeRefusedError(
+          'The morning of 2026-09-07 of pupil userID 11110 in class groupID '
+          '298 holds "Ziek", which onlyReplacing does not allow: nothing was '
+          'sent.',
+          userId: 11110,
+          part: ss.DayPart.morning,
+          date: '2026-09-07',
+          heldStatus: 'Ziek',
+          onlyReplacing: requeuedWriteMayReplace,
+        ),
+      );
+      await expectLater(
+        write(SmartschoolPresenceWriter(session), keepRecordedAbsence: true),
+        throwsA(
+          isA<PresenceRejected>().having(
+            (PresenceRejected e) => e.message,
+            'message',
+            allOf(
+              contains('voormiddag van 2026-09-07'),
+              contains('"Ziek"'),
+              contains('niet overschreven'),
+              contains('manueel ingevoerd'),
+              isNot(contains('onlyReplacing')),
+            ),
+          ),
+        ),
+      );
+      expect(session.signIns, 0);
     });
 
     test('a rejected save is terminal and keeps the server\'s words', () async {
