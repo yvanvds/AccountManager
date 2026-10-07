@@ -234,6 +234,54 @@ String describeRefusedChange(ss.SmartschoolPresenceChangeRefusedError error) {
       'ingevoerd.';
 }
 
+/// The operator's words for a failure the drain retries — and, once its
+/// attempts are spent, the text the registration is given up with (#463).
+///
+/// The drain's `describeFailure`. Without it the drain stores the error's
+/// `toString()`, and for the library's own types that is a Dart type name and
+/// an English sentence about JSON on the desk's *mislukt* line. The operator
+/// reading that line has one decision to make — **Opnieuw proberen** or
+/// **Manueel ingevoerd** — and needs to be told the one thing these failures
+/// share: Smartschool was not there for a while, so trying again later is the
+/// answer. Two of the library's types reach the desk that way, both returned
+/// unchanged by [classifyPresenceFailure] so that the drain retries them:
+///
+/// - a [ss.SmartschoolPresenceUnreadableAnswerError] (#461) — an empty answer,
+///   an HTML page or broken JSON, such as a proxy's 502;
+/// - a [ss.SmartschoolConnectionError] (#455) — Smartschool was never reached.
+///   The sentence points at **Aanmelding testen** for when trying again does
+///   not help: that test tells an unplugged network from a certificate this
+///   computer does not trust (`describeSmartschoolSignInFailure`), and the
+///   desk's line has no room to.
+///
+/// Neither sentence says whether the registration reached Smartschool. For a
+/// read nothing was written, but an unreadable answer to the save, or a
+/// connection that dropped during it, leaves that unknown. It does not matter
+/// for the choice: sending it again is safe either way (see
+/// [classifyPresenceFailure]).
+///
+/// The library's own text follows on the next line, the shape
+/// `describeSmartschoolSignInFailure` gives a failed **Aanmelding testen**: the
+/// desk shows the first line and folds the rest away behind **Details**
+/// (`DeskWarning.fromText`), and the log and the journal keep both, for
+/// whoever has to diagnose it. Anything else comes back as its own text, as
+/// before.
+String describePresenceFailure(Object error) {
+  final String? sentence = switch (error) {
+    ss.SmartschoolPresenceUnreadableAnswerError(:final int? statusCode) =>
+      'Smartschool gaf een antwoord dat niet gelezen kon worden'
+          '${statusCode == null ? '' : ' (HTTP $statusCode)'}. Meestal is '
+          'Smartschool dan even niet bereikbaar; probeer opnieuw zodra het '
+          'weer werkt.',
+    ss.SmartschoolConnectionError() =>
+      'Smartschool was niet bereikbaar vanaf deze computer. Probeer opnieuw '
+          'zodra de netwerkverbinding in orde is; lukt het dan nog niet, test '
+          'de aanmelding bij Instellingen → Te laat.',
+    _ => null,
+  };
+  return sentence == null ? '$error' : '$sentence\n$error';
+}
+
 /// The library's name for a half-day (#428). Exhaustive, so a third value on
 /// either side is a compile error here rather than a presence in the wrong
 /// cell.
@@ -309,10 +357,10 @@ Object classifyPresenceFailure(Object error) {
     // record up and moves on to the next one, so the whole queue fails
     // record by record: what a desk saw live on 2026-10-07, when v1.4.0 read
     // an empty answer as one. As a transient failure, the drain's
-    // `maxAttempts` bounds it: one record ends *mislukt* with this error, the
-    // drain stands down as `degraded`, and everything behind it stays queued
-    // on disk until Smartschool answers again. A real refusal costs only the
-    // backoff.
+    // `maxAttempts` bounds it: one record ends *mislukt* with this error, in
+    // [describePresenceFailure]'s words (#463), the drain stands down as
+    // `degraded`, and everything behind it stays queued on disk until
+    // Smartschool answers again. A real refusal costs only the backoff.
     //
     // Retrying the save itself (`/Presence/Class/savePupilsPresences`) is
     // safe, even though nobody knows whether it landed. The next call reads

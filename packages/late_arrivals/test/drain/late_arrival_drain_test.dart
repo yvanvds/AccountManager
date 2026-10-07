@@ -160,6 +160,7 @@ void main() {
     int maxAttempts = 3,
     int maxSessionRenewals = 2,
     List<Duration>? waits,
+    String Function(Object error)? describeFailure,
   }) =>
       LateArrivalDrain(
         journal: journal,
@@ -169,6 +170,7 @@ void main() {
         maxSessionRenewals: maxSessionRenewals,
         clock: () => monday,
         sleep: (Duration d) async => waits?.add(d),
+        describeFailure: describeFailure,
       );
 
   Future<LateArrivalJournal> openJournal({LateArrivalRecordSink? sink}) =>
@@ -633,6 +635,154 @@ void main() {
       expect(journal.pending, isEmpty);
       await drain.close();
       await second.close();
+    });
+  });
+
+  group('a retried failure in the operator\'s words (#463)', () {
+    /// What the desk supplies, in miniature: a sentence for the operator,
+    /// with the error's own text kept on the line below it.
+    String describe(Object error) => 'Smartschool was even weg.\n$error';
+
+    test(
+        'a record given up on carries the describer\'s words, after the same '
+        'attempts and the same backoff', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const SocketFailure('eerste'),
+          const SocketFailure('tweede'),
+          const SocketFailure('derde — de laatste'),
+        ],
+      );
+      final RecordingLog log = RecordingLog();
+      final List<Duration> waits = <Duration>[];
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 3,
+        log: log,
+        waits: waits,
+        describeFailure: describe,
+      );
+
+      drain.start();
+      await drain.settle();
+
+      // Only the words changed: three attempts, backed off as ever.
+      expect(writer.sent, hasLength(3));
+      expect(
+          waits, const <Duration>[Duration(seconds: 2), Duration(seconds: 4)]);
+      final LateArrivalRecord failed = journal.records.single;
+      expect(failed.status, LateArrivalStatus.failed);
+      expect(failed.error, 'Smartschool was even weg.\nderde — de laatste');
+      expect(drain.status.lastError, failed.error);
+      expect(drain.status.degraded, isTrue);
+      // The log has the operator's sentence and the error's own text both.
+      expect(
+        log.errors,
+        everyElement(
+          allOf(
+            contains('Smartschool was even weg.'),
+            contains('derde — de laatste'),
+          ),
+        ),
+      );
+      await drain.close();
+    });
+
+    test('a sign-in that failed is put into words as well', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          for (int i = 0; i < 4; i++) const PresenceSessionExpired('verlopen'),
+        ],
+      )..signInError = const SocketFailure('geen netwerk');
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 2,
+        describeFailure: describe,
+      );
+
+      drain.start();
+      await drain.settle();
+
+      expect(journal.records.single.status, LateArrivalStatus.failed);
+      expect(
+        journal.records.single.error,
+        'Aanmelden bij Smartschool lukte niet: Smartschool was even weg.\n'
+        'geen netwerk',
+      );
+      await drain.close();
+    });
+
+    test(
+        'a rejection keeps the server\'s words, and an expired session its '
+        'own: the describer is not asked', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      await register(
+        journal,
+        scanOf('john.roe', accountId: '654321', name: 'John', surname: 'Roe'),
+      );
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const PresenceRejected('Klas 298 hoort niet bij dit account.'),
+          // Renewals capped at none: the expiry is John's one strike.
+          const PresenceSessionExpired('De sessie is verlopen.'),
+        ],
+      );
+      final List<Object> asked = <Object>[];
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 1,
+        maxSessionRenewals: 0,
+        describeFailure: (Object error) {
+          asked.add(error);
+          return describe(error);
+        },
+      );
+
+      drain.start();
+      await drain.settle();
+
+      expect(asked, isEmpty);
+      expect(
+        journal.records.first.error,
+        'Klas 298 hoort niet bij dit account.',
+      );
+      expect(journal.records.last.error, 'De sessie is verlopen.');
+      await drain.close();
+    });
+
+    test('a describer that throws costs the words, never the record', () async {
+      final LateArrivalJournal journal = await openJournal();
+      await register(journal, scanOf('jane.doe'));
+      final FakePresenceWriter writer = FakePresenceWriter(
+        failures: <Object?>[
+          const SocketFailure('geen verbinding'),
+          const SocketFailure('geen verbinding'),
+        ],
+      );
+      final LateArrivalDrain drain = drainOn(
+        journal,
+        writer,
+        maxAttempts: 2,
+        describeFailure: (Object error) => throw StateError('stuk'),
+      );
+
+      drain.start();
+      await drain.settle();
+
+      expect(writer.sent, hasLength(2));
+      final LateArrivalRecord failed = journal.records.single;
+      expect(failed.status, LateArrivalStatus.failed);
+      expect(failed.error, 'geen verbinding');
+      expect(drain.status.degraded, isTrue);
+      await drain.close();
     });
   });
 

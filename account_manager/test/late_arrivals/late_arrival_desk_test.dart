@@ -111,6 +111,7 @@ void main() {
     LiveSettings? settings,
     LatePresenceWriterFactory? writerFor,
     SmartschoolSignInProbe? signInProbe,
+    RetryBackoff drainBackoff = LateArrivalDrain.defaultBackoff,
   }) =>
       LateArrivalDesk(
         journalStore: journalStore ?? InMemoryJournalStore(),
@@ -120,6 +121,7 @@ void main() {
         settings: settings,
         writerFor: writerFor,
         signInProbe: signInProbe,
+        drainBackoff: drainBackoff,
       );
 
   Future<LateArrivalRecord> register(LateArrivalDesk desk) =>
@@ -333,6 +335,73 @@ void main() {
       await desk.drain!.settle();
       expect(writer.written, <int>[4242]);
       desk.dispose();
+    });
+  });
+
+  group('a registration given up on after an outage (#463)', () {
+    test(
+        'carries a Dutch sentence for the operator, with the library\'s own '
+        'words on the line below', () async {
+      // The desk wires the describer into the drain it builds; without it the
+      // record would carry `SmartschoolConnectionError: Unable to reach …`.
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError(
+        'Unable to reach Smartschool at https://arcadia.smartschool.be: the '
+        'connection failed (SocketException: Connection refused)',
+      );
+      final writer = _RecordingWriter()
+        ..failures.addAll(<Object>[for (int i = 0; i < 5; i++) unreachable]);
+      final desk = deskWith(
+        credentials: InMemoryOperatorCredentialStore(login),
+        settings: LiveSettings(_withSite('arcadia.smartschool.be')),
+        writerFor: (_, __) => writer,
+        // Five attempts on the real clock would be half a minute of backoff.
+        drainBackoff:
+            const RetryBackoff(base: Duration.zero, max: Duration.zero),
+      );
+      await desk.start();
+
+      final record = await register(desk);
+      await desk.drain!.settle();
+
+      final LateArrivalRecord failed = desk.journal!.byId(record.id)!;
+      expect(failed.status, LateArrivalStatus.failed);
+      expect(writer.failures, isEmpty, reason: 'all five attempts were made');
+      expect(desk.drain!.status.degraded, isTrue);
+
+      final DeskWarning reason = DeskWarning.fromText(failed.error!);
+      expect(
+        reason.message,
+        'Smartschool was niet bereikbaar vanaf deze computer. Probeer opnieuw '
+        'zodra de netwerkverbinding in orde is; lukt het dan nog niet, test de '
+        'aanmelding bij Instellingen → Te laat.',
+      );
+      expect(reason.detail, '$unreachable');
+      desk.dispose();
+    });
+  });
+
+  group('DeskWarning.fromText (#463)', () {
+    test('one line is all sentence, with nothing behind it', () {
+      final DeskWarning warning =
+          DeskWarning.fromText('  Klas 298 hoort niet bij dit account.  ');
+      expect(warning.message, 'Klas 298 hoort niet bij dit account.');
+      expect(warning.hasDetail, isFalse);
+    });
+
+    test('the first line is the sentence and the rest is the detail', () {
+      final DeskWarning warning = DeskWarning.fromText(
+        'Smartschool was even weg.\n'
+        'SmartschoolConnectionError: Unable to reach Smartschool\n'
+        'Error: SocketException: Connection refused\n',
+      );
+      expect(warning.message, 'Smartschool was even weg.');
+      expect(
+        warning.detail,
+        'SmartschoolConnectionError: Unable to reach Smartschool\n'
+        'Error: SocketException: Connection refused',
+      );
+      expect(warning.hasDetail, isTrue);
     });
   });
 

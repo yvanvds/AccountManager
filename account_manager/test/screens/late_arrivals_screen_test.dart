@@ -1105,6 +1105,107 @@ void main() {
     });
   });
 
+  group('a failed line keeps the machine words behind Details (#463)', () {
+    /// What `describePresenceFailure` leaves on a record the drain gave up on
+    /// after a gateway's 502: the operator's sentence, then the library's own.
+    const String unreadable =
+        'Smartschool gaf een antwoord dat niet gelezen kon worden (HTTP 502). '
+        'Meestal is Smartschool dan even niet bereikbaar; probeer opnieuw '
+        'zodra het weer werkt.\n'
+        'SmartschoolPresenceUnreadableAnswerError: Smartschool answered '
+        '/Presence/Main/getConfig with an HTML page instead of JSON (HTTP 502, '
+        'title "502 Bad Gateway", heading "502 Bad Gateway").';
+
+    Future<LateArrivalRecord> failJonas(
+      LateArrivalDesk desk,
+      String error,
+    ) async {
+      final LateArrivalJournal journal = desk.journal!;
+      final LateArrivalRecord record = await journal.register(
+        scan: const ScanRegisterable(_jonas),
+        scannedAt: DateTime(2026, 9, 7, 8, 42),
+        reasonLabel: 'Bus te laat',
+        reasonIsValid: true,
+      );
+      await journal.markSent(record.id);
+      return journal.markFailed(record.id, error);
+    }
+
+    testWidgets(
+        'the line is the sentence alone, and Details opens and folds the '
+        'library\'s text', (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final LateArrivalRecord record = await failJonas(desk, unreadable);
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(
+        _textOf(
+          tester,
+          find.byKey(ValueKey<String>('late-queue-failure-${record.id}')),
+        ),
+        'Jonas Peeters, 3MTa — Smartschool gaf een antwoord dat niet gelezen '
+        'kon worden (HTTP 502). Meestal is Smartschool dan even niet '
+        'bereikbaar; probeer opnieuw zodra het weer werkt.',
+      );
+
+      final Finder details = find
+          .byKey(ValueKey<String>('late-queue-failure-details-${record.id}'));
+      final Finder detail = find
+          .byKey(ValueKey<String>('late-queue-failure-detail-${record.id}'));
+      expect(detail, findsNothing);
+
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail).data,
+        allOf(
+          startsWith('SmartschoolPresenceUnreadableAnswerError: '),
+          contains('502 Bad Gateway'),
+        ),
+      );
+
+      await tester.tap(details);
+      await tester.pumpAndSettle();
+      expect(detail, findsNothing);
+
+      // The keyboard is the scanner's again after the click.
+      await _scan(tester, '223344');
+      expect(_textOf(tester, _name), 'Lea Janssens');
+    });
+
+    testWidgets('a reason on one line stands whole, with no Details',
+        (WidgetTester tester) async {
+      _useTallWindow(tester);
+      final LateArrivalDesk desk = await _openDesk(tester);
+      final LateArrivalRecord record =
+          await failJonas(desk, 'Geen schrijfrechten voor deze klas.');
+
+      await tester.pumpWidget(_wrap(
+        desk: desk,
+        child: LateArrivalsScreen(bootstrap: _harness().bootstrap),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(
+        _textOf(
+          tester,
+          find.byKey(ValueKey<String>('late-queue-failure-${record.id}')),
+        ),
+        'Jonas Peeters, 3MTa — Geen schrijfrechten voor deze klas.',
+      );
+      expect(
+        find.byKey(ValueKey<String>('late-queue-failure-details-${record.id}')),
+        findsNothing,
+      );
+    });
+  });
+
   testWidgets('a desk with no printer says so and still registers',
       (WidgetTester tester) async {
     // An empty shared list (#435) is a configuration, not a gap — no ticket

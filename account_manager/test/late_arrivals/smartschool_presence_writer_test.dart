@@ -597,6 +597,133 @@ void main() {
     });
   });
 
+  group('a retried failure in the operator\'s words (#463)', () {
+    /// The sentence the desk shows, and the text kept behind it.
+    (String, String) linesOf(String text) {
+      final int newline = text.indexOf('\n');
+      return newline < 0
+          ? (text, '')
+          : (text.substring(0, newline), text.substring(newline + 1));
+    }
+
+    test(
+        'an answer that could not be read is a Dutch sentence with its HTTP '
+        'status, and the library\'s text on the line below', () {
+      final (String sentence, String detail) =
+          linesOf(describePresenceFailure(emptyGatewayAnswer));
+      expect(
+        sentence,
+        'Smartschool gaf een antwoord dat niet gelezen kon worden (HTTP 502). '
+        'Meestal is Smartschool dan even niet bereikbaar; probeer opnieuw '
+        'zodra het weer werkt.',
+      );
+      // Kept, whole, for whoever has to diagnose it.
+      expect(detail, '$emptyGatewayAnswer');
+      expect(detail, contains('SmartschoolPresenceUnreadableAnswerError'));
+    });
+
+    test(
+        'every kind of unreadable answer gets the sentence, with or without a '
+        'status', () {
+      final ss.SmartschoolPresenceUnreadableAnswerError page =
+          smartschoolErrorPage(path: '/Presence/Class/savePupilsPresences');
+      final (String pageSentence, String pageDetail) =
+          linesOf(describePresenceFailure(page));
+      expect(
+          pageSentence,
+          startsWith('Smartschool gaf een antwoord dat niet '
+              'gelezen kon worden (HTTP 500).'));
+      expect(pageDetail, contains('Oeps, er ging iets mis'));
+      expect(pageDetail, contains('/Presence/Class/savePupilsPresences'));
+
+      const ss.SmartschoolPresenceUnreadableAnswerError unknown =
+          ss.SmartschoolPresenceUnreadableAnswerError(
+        'Broken JSON from /Presence/Class/getClass (status unknown).',
+        path: '/Presence/Class/getClass',
+        kind: ss.PresenceUnreadableAnswerKind.malformedJson,
+      );
+      final (String unknownSentence, _) =
+          linesOf(describePresenceFailure(unknown));
+      expect(
+        unknownSentence,
+        startsWith(
+          'Smartschool gaf een antwoord dat niet gelezen kon worden. Meestal',
+        ),
+      );
+    });
+
+    test(
+        'a Smartschool that could not be reached is a Dutch sentence, and the '
+        'library\'s text on the line below', () {
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError(
+        'Unable to reach Smartschool at https://arcadia.smartschool.be: the '
+        'connection failed (SocketException: Connection refused)',
+      );
+      final (String sentence, String detail) =
+          linesOf(describePresenceFailure(unreachable));
+      expect(
+        sentence,
+        'Smartschool was niet bereikbaar vanaf deze computer. Probeer opnieuw '
+        'zodra de netwerkverbinding in orde is; lukt het dan nog niet, test de '
+        'aanmelding bij Instellingen → Te laat.',
+      );
+      expect(detail, '$unreachable');
+    });
+
+    test('anything else keeps its own text, as before', () {
+      for (final Object error in <Object>[
+        const SocketException('Connection reset by peer'),
+        StateError('SmartschoolClient was disposed'),
+        const ss.SmartschoolAuthenticationError('Login expired'),
+      ]) {
+        expect(describePresenceFailure(error), '$error');
+      }
+    });
+
+    test(
+        'through the real drain over the real writer, the registration given '
+        'up on carries the sentence after the same attempts', () async {
+      final DateTime monday = DateTime(2026, 9, 7, 8, 14);
+      final LateArrivalJournal journal =
+          await LateArrivalJournal.open(InMemoryJournalStore(), now: monday);
+      final LateArrivalRecord record = await journal.register(
+        scan: const ScanRegisterable(jonas),
+        scannedAt: monday,
+        reasonLabel: 'Bus te laat',
+        reasonIsValid: true,
+      );
+      final FakeSession session = FakeSession(failure: emptyGatewayAnswer);
+      final List<Duration> waits = <Duration>[];
+      final LateArrivalDrain drain = LateArrivalDrain(
+        journal: journal,
+        writer: SmartschoolPresenceWriter(session),
+        maxAttempts: 3,
+        clock: () => monday,
+        sleep: (Duration d) async => waits.add(d),
+        describeFailure: describePresenceFailure,
+      );
+
+      drain.start();
+      await drain.settle();
+
+      // Still retried with backoff, never signed in again: only the words
+      // changed.
+      expect(session.calls, 3);
+      expect(
+          waits, const <Duration>[Duration(seconds: 2), Duration(seconds: 4)]);
+      expect(session.signIns, 0);
+      final LateArrivalRecord failed = journal.byId(record.id)!;
+      expect(failed.status, LateArrivalStatus.failed);
+      final (String sentence, String detail) = linesOf(failed.error!);
+      expect(sentence, startsWith('Smartschool gaf een antwoord'));
+      expect(sentence,
+          isNot(contains('SmartschoolPresenceUnreadableAnswerError')));
+      expect(detail, '$emptyGatewayAnswer');
+      await drain.close();
+    });
+  });
+
   group('re-authentication', () {
     test('is delegated to the session', () async {
       final FakeSession session = FakeSession();

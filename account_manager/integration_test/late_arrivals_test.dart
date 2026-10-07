@@ -39,6 +39,7 @@ import 'package:late_arrivals/late_arrivals.dart'
         LateArrivalStatus,
         LatePresenceWriter,
         PresenceRejected,
+        RetryBackoff,
         ScanRegisterable,
         ScannedStudent,
         TicketPrinter,
@@ -1693,6 +1694,232 @@ void main() {
           .join();
       expect(onDisk, contains('"confirmed"'));
       expect(onDisk, isNot(contains('"failed"')));
+
+      // Unmount before letting go of the desk, so the scope is not listening to
+      // a disposed notifier.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      desk.dispose();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(
+        'a registration given up on because Smartschool kept answering '
+        'unreadably, or could not be reached, reads as a Dutch sentence on its '
+        'mislukt line, with the library\'s words behind Details (#463)',
+        (WidgetTester tester) async {
+      // The bug, end to end. A Smartschool outage that outlasts the drain's
+      // backoff leaves a registration *mislukt*, and the line said why in a
+      // Dart type name and an English sentence about JSON — to the operator
+      // who has to choose between Opnieuw proberen and Manueel ingevoerd.
+      //
+      // This needs the real app, because the words travel through every
+      // layer: the library's typed error, the real `SmartschoolPresenceWriter`
+      // passing it on unchanged, the real drain retrying it to the end of its
+      // attempts and putting it into words with the describer the desk wires
+      // in, the journal on a real file, and the queue panel splitting the
+      // sentence from the library's text on the real tab, with real fonts.
+      // Only the Smartschool session under the writer is a fake: a presence
+      // write is a write against the school's tenant, and the live-testing
+      // policy keeps those out of CI.
+      useTallWindow(tester);
+
+      final Directory dir =
+          Directory.systemTemp.createTempSync('am-te-laat-463-');
+      addTearDown(() => deleteTempDir(dir));
+      final Directory journalDir =
+          Directory('${dir.path}${Platform.pathSeparator}journaal');
+
+      // Every attempt at Jonas meets the gateway's page; every attempt at Lea
+      // meets a Smartschool that cannot be reached. After that it answers.
+      const ss.SmartschoolConnectionError unreachable =
+          ss.SmartschoolConnectionError(
+        'Unable to reach Smartschool at https://arcadia.smartschool.be: the '
+        'connection failed (SocketException: Connection refused)',
+      );
+      final _ScriptedPresenceSession session = _ScriptedPresenceSession()
+        ..failures.addAll(<Object>[
+          for (int i = 0; i < 5; i++)
+            ss.SmartschoolPresenceUnreadableAnswerError.fromPage(
+              '<!DOCTYPE html><html><head><title>502 Bad Gateway</title>'
+              '</head><body><center><h1>502 Bad Gateway</h1></center></body>'
+              '</html>',
+              path: '/Presence/Main/getConfig',
+              statusCode: 502,
+            ),
+          for (int i = 0; i < 5; i++) unreachable,
+        ]);
+
+      const AppSettings base = AppSettings();
+      final LiveSettings live = LiveSettings(
+        base.copyWith(
+          smartschool:
+              base.smartschool.copyWith(uri: 'https://arcadia.smartschool.be'),
+        ),
+      );
+      final harness = ReconcileHarness(
+        ssInitial: lateArrivalSnap(),
+        smartschool: lateArrivalSnap(),
+        liveSettings: live,
+      );
+      final LateArrivalDesk desk = LateArrivalDesk(
+        journalStore: FileJournalStore(journalDir),
+        credentials: InMemoryOperatorCredentialStore(
+          const SmartschoolOperatorLogin(
+            username: 'ann.peeters',
+            password: 'zeergeheim',
+          ),
+        ),
+        deskId: 'onthaal-463',
+        settings: live,
+        // The production writer, over the fake session.
+        writerFor: (_, __) => SmartschoolPresenceWriter(session),
+        // The drain's five attempts, without half a minute of real backoff.
+        drainBackoff: const RetryBackoff(
+          base: Duration(milliseconds: 1),
+          max: Duration(milliseconds: 1),
+        ),
+      );
+
+      await tester.pumpWidget(AccountManagerApp(
+        session: SignInSession(FakeBroker(silent: (_) => fakeToken('AT'))),
+        graph: graph,
+        reconcileBootstrap: harness.bootstrap,
+        connection: ConnectionServices(store: InMemoryConnectionStore()),
+        desk: desk,
+        refusalBeep: _CountingRefusalBeep(),
+        ticketTransport: _RecordingTicketTransport(),
+        preferences: LocalPreferences.inMemory(),
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(railTab('Te laat'));
+      await tester.pumpAndSettle();
+      await pumpUntil(
+        tester,
+        'the desk to open its journal and attach the drain',
+        () => desk.ready && desk.draining,
+      );
+
+      String textOf(Key key) => tester.widget<Text>(find.byKey(key)).data ?? '';
+
+      /// Scans [code], picks the first reason, and waits until the drain has
+      /// spent its attempts on it and given it up.
+      Future<LateArrivalRecord> registerGivenUp(
+        String code,
+        String name,
+      ) async {
+        for (final String character in code.split('')) {
+          await tester.sendKeyEvent(
+            _scannerKeys[character]!,
+            character: character,
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pumpAndSettle();
+        expect(textOf(const ValueKey<String>('late-scan-name')), name);
+        await tester.tap(find.byKey(const ValueKey<String>('late-reason-0')));
+        await tester.pumpAndSettle();
+        // Real file I/O and a real background drain behind the tap (#425):
+        // wait on what happened, never on a frame.
+        await pumpUntil(
+          tester,
+          'the drain to give up on $name',
+          () => desk.journal!.failures
+              .any((LateArrivalRecord r) => r.displayName == name),
+        );
+        return desk.journal!.failures
+            .singleWhere((LateArrivalRecord r) => r.displayName == name);
+      }
+
+      // --- Jonas: the gateway's 502 page, five times over. ---------------------
+      final LateArrivalRecord jonas =
+          await registerGivenUp('123456', 'Jonas Peeters');
+      // --- Lea: Smartschool cannot be reached at all. ---------------------------
+      final LateArrivalRecord lea =
+          await registerGivenUp('223344', 'Lea Janssens');
+
+      // Retried to the end of the attempts, both of them — only the words
+      // changed — and never signed in again for a network that was down.
+      expect(session.calls, 10);
+      expect(session.failures, isEmpty);
+      expect(session.signIns, 0);
+      expect(find.text('2 MISLUKT'), findsOneWidget);
+
+      // The lines the operator reads: a Dutch sentence each, with no type name
+      // and none of the library's English.
+      expect(
+        textOf(ValueKey<String>('late-queue-failure-${jonas.id}')),
+        'Jonas Peeters, 3MTa — Smartschool gaf een antwoord dat niet gelezen '
+        'kon worden (HTTP 502). Meestal is Smartschool dan even niet '
+        'bereikbaar; probeer opnieuw zodra het weer werkt.',
+      );
+      expect(
+        textOf(ValueKey<String>('late-queue-failure-${lea.id}')),
+        'Lea Janssens, 3MTa — Smartschool was niet bereikbaar vanaf deze '
+        'computer. Probeer opnieuw zodra de netwerkverbinding in orde is; lukt '
+        'het dan nog niet, test de aanmelding bij Instellingen → Te laat.',
+      );
+
+      // The library's words are one click away, for whoever has to fix it.
+      Finder details(LateArrivalRecord r) =>
+          find.byKey(ValueKey<String>('late-queue-failure-details-${r.id}'));
+      Finder detail(LateArrivalRecord r) =>
+          find.byKey(ValueKey<String>('late-queue-failure-detail-${r.id}'));
+      expect(detail(jonas), findsNothing);
+      await tester.ensureVisible(details(jonas));
+      await tester.pumpAndSettle();
+      await tester.tap(details(jonas));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail(jonas)).data,
+        allOf(
+          startsWith('SmartschoolPresenceUnreadableAnswerError: '),
+          contains('/Presence/Main/getConfig'),
+          contains('502 Bad Gateway'),
+        ),
+      );
+      expect(detail(lea), findsNothing);
+      await tester.ensureVisible(details(lea));
+      await tester.pumpAndSettle();
+      await tester.tap(details(lea));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SelectableText>(detail(lea)).data,
+        '$unreachable',
+      );
+
+      // And on disk, under the same record, for whoever reads the journal.
+      final String onDisk = journalDir
+          .listSync()
+          .whereType<File>()
+          .map((File f) => f.readAsStringSync())
+          .join();
+      expect(onDisk, contains('Smartschool gaf een antwoord'));
+      expect(onDisk, contains('SmartschoolPresenceUnreadableAnswerError'));
+      expect(onDisk, contains('SmartschoolConnectionError'));
+
+      // --- Smartschool is back; the operator does what the line said. ---------
+      final Finder retry =
+          find.byKey(const ValueKey<String>('late-queue-retry'));
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await pumpUntil(
+        tester,
+        'both registrations to be confirmed by Smartschool',
+        () =>
+            desk.journal!.byId(jonas.id)!.status ==
+                LateArrivalStatus.confirmed &&
+            desk.journal!.byId(lea.id)!.status == LateArrivalStatus.confirmed &&
+            find.text('0 IN WACHTRIJ').evaluate().isNotEmpty,
+      );
+      expect(session.accepted, <int>[12016, 12017]);
+      expect(find.byKey(const ValueKey<String>('late-queue-failed')),
+          findsNothing);
+      expect(
+        textOf(const ValueKey<String>('late-queue-line')),
+        'Alles is naar Smartschool verstuurd.',
+      );
 
       // Unmount before letting go of the desk, so the scope is not listening to
       // a disposed notifier.

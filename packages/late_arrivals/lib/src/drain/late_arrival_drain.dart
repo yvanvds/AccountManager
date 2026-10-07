@@ -53,8 +53,9 @@ final class LateArrivalDrainStatus {
   /// later.
   final bool degraded;
 
-  /// The last failure, in words an operator can be shown. `null` after a
-  /// success.
+  /// The last failure, in words an operator can be shown — the
+  /// [LateArrivalDrain.describeFailure]'s, for a failure the worker retries
+  /// (#463). `null` after a success.
   final String? lastError;
 
   /// When Smartschool last accepted a write.
@@ -98,7 +99,7 @@ final class LateArrivalDrainStatus {
 /// because retrying only buries the server's explanation. Whatever the route,
 /// a record that ends up given up on lands in [LateArrivalStatus.failed] with
 /// the error text on it and stays in the journal, visible, rather than
-/// vanishing.
+/// vanishing. For a failure it retried, that text is [describeFailure]'s.
 ///
 /// **It stands down rather than draining into failures.** When a record
 /// exhausts its budget against a transient fault the worker stops, marks itself
@@ -122,23 +123,58 @@ class LateArrivalDrain implements LateArrivalRecordSink {
     core.ILog? log,
     DateTime Function()? clock,
     Future<void> Function(Duration)? sleep,
-    this.backoff = const RetryBackoff(
-      base: Duration(seconds: 2),
-      max: Duration(seconds: 60),
-    ),
+    String Function(Object error)? describeFailure,
+    this.backoff = defaultBackoff,
     this.maxAttempts = 5,
     this.maxSessionRenewals = 2,
   })  : _journal = journal,
         _writer = writer,
         _log = log,
         _clock = clock ?? DateTime.now,
-        _sleep = sleep ?? _wallClockSleep;
+        _sleep = sleep ?? _wallClockSleep,
+        describeFailure = describeFailure ?? _ownText;
+
+  /// The [backoff] when none is given: two seconds, doubling, at most a
+  /// minute. Named so a caller that passes a backoff through can default to
+  /// the same one.
+  static const RetryBackoff defaultBackoff = RetryBackoff(
+    base: Duration(seconds: 2),
+    max: Duration(seconds: 60),
+  );
 
   final LateArrivalJournal _journal;
   final LatePresenceWriter _writer;
   final core.ILog? _log;
   final DateTime Function() _clock;
   final Future<void> Function(Duration) _sleep;
+
+  /// Puts a failure the worker retries into the operator's words (#463).
+  ///
+  /// What it returns is the text a record given up on carries — the desk
+  /// shows it on the record's *mislukt* line — and what [status] and the log
+  /// report. Without one, that is the error's own `toString()`, which for a
+  /// connector library's types is a Dart type name and an English sentence
+  /// (`SmartschoolConnectionError: Unable to reach …`): the wrong words for
+  /// the operator, who has to choose between retrying and entering the
+  /// registration by hand. This package cannot do better by itself and must
+  /// not try: it is pure Dart, and it does not know which library sits behind
+  /// the [LatePresenceWriter]. So whoever wires a real writer supplies this.
+  ///
+  /// Asked for every failure the worker retries, and for a sign-in that
+  /// failed. Not for a [PresenceRejected], whose message already is the
+  /// server's answer, nor for a [PresenceSessionExpired], which carries its
+  /// own. It changes the words only: which failures are retried, how often
+  /// and how long apart is the writer's classification, [maxAttempts] and
+  /// [backoff], exactly as without it.
+  ///
+  /// The text may run over several lines. Keep the library's own text on a
+  /// later line rather than dropping it — the desk shows the first line and
+  /// folds the rest away behind **Details**, and whoever has to diagnose the
+  /// failure afterwards needs it. A describer that throws costs the words,
+  /// never the record: the error's own text is used instead.
+  final String Function(Object error) describeFailure;
+
+  static String _ownText(Object error) => '$error';
 
   /// How long the worker waits between attempts at the same record.
   final RetryBackoff backoff;
@@ -320,7 +356,7 @@ class LateArrivalDrain implements LateArrivalRecordSink {
       } on Object catch (error) {
         _inFlight = false;
         final bool expired = error is PresenceSessionExpired;
-        lastError = expired ? error.message : '$error';
+        lastError = expired ? error.message : _describe(error);
         _consecutiveFailures++;
         _lastError = lastError;
         await _journal.markPending(id);
@@ -334,7 +370,8 @@ class LateArrivalDrain implements LateArrivalRecordSink {
             // straight away and leave the record's budget untouched.
             continue;
           } on Object catch (signInError) {
-            lastError = 'Aanmelden bij Smartschool lukte niet: $signInError';
+            lastError = 'Aanmelden bij Smartschool lukte niet: '
+                '${_describe(signInError)}';
             _lastError = lastError;
             _emit();
           }
@@ -382,6 +419,17 @@ class LateArrivalDrain implements LateArrivalRecordSink {
       'De te-laatregistratie van ${record.displayName} (${record.className}) '
       'kon niet naar Smartschool geschreven worden: $error',
     );
+  }
+
+  /// [describeFailure]'s words for [error], or the error's own text when the
+  /// describer throws. It runs inside the pump's failure handling, where a
+  /// throw would leave the record half-handled and the worker stopped.
+  String _describe(Object error) {
+    try {
+      return describeFailure(error);
+    } on Object {
+      return '$error';
+    }
   }
 
   void _releaseWaiters() {

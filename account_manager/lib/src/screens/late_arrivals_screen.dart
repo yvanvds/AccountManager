@@ -927,26 +927,12 @@ class _LateArrivalsScreenState extends State<LateArrivalsScreen> {
         ),
         for (final LateArrivalRecord r in failed) ...<Widget>[
           const SizedBox(height: PlinkSpacing.s2),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  '${r.displayName}, ${r.className} — '
-                  '${r.error ?? 'onbekende fout'}',
-                  key: ValueKey<String>('late-queue-failure-${r.id}'),
-                  style: text.bodySmall,
-                ),
-              ),
-              const SizedBox(width: PlinkSpacing.s3),
-              // Per line, never in bulk (#460): each press is the operator's
-              // own statement that *this* student is in Smartschool.
-              TextButton(
-                key: ValueKey<String>('late-queue-handled-${r.id}'),
-                onPressed: () => unawaited(_confirmHandledManually(r)),
-                child: const Text('Manueel ingevoerd'),
-              ),
-            ],
+          _QueueFailureLine(
+            // Keyed on the record so a line's open Details never carries over
+            // to the record that takes its slot.
+            key: ValueKey<String>('late-queue-failure-line-${r.id}'),
+            record: r,
+            onHandledManually: () => unawaited(_confirmHandledManually(r)),
           ),
         ],
         if (degraded || failed.isNotEmpty) ...<Widget>[
@@ -1398,33 +1384,138 @@ class _DeskNoteState extends State<_DeskNote> {
             ],
           ),
           if (hasDetail && _open)
-            Padding(
-              padding: const EdgeInsets.only(
-                left: 18 + PlinkSpacing.s2,
-                top: PlinkSpacing.s2,
-              ),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(PlinkSpacing.s2),
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerHighest,
-                  borderRadius: const BorderRadius.all(
-                    Radius.circular(PlinkRadius.base),
-                  ),
-                ),
-                // Selectable because the whole point of keeping it is that
-                // somebody pastes it into an issue or a chat.
-                child: SelectableText(
-                  widget.detail,
-                  key: const ValueKey<String>('late-note-detail'),
-                  style: text.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-              ),
+            _RawDetail(
+              widget.detail,
+              textKey: const ValueKey<String>('late-note-detail'),
+              indent: 18 + PlinkSpacing.s2,
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// One registration the drain gave up on, on the queue panel's *mislukt*
+/// list: who, why, and **Manueel ingevoerd** (#460).
+///
+/// The why is the record's error read as a [DeskWarning] (#463): its first
+/// line on the line, and whatever follows it — the library's own text, which
+/// `describePresenceFailure` keeps under its Dutch sentence — behind
+/// **Details**, as the desk's notes do (#414). Until #463 the whole error stood
+/// on the line, and for a Smartschool that was briefly away that was a Dart
+/// type name and an English sentence about JSON: nothing the operator could
+/// choose between **Opnieuw proberen** and **Manueel ingevoerd** by.
+class _QueueFailureLine extends StatefulWidget {
+  const _QueueFailureLine({
+    super.key,
+    required this.record,
+    required this.onHandledManually,
+  });
+
+  final LateArrivalRecord record;
+  final VoidCallback onHandledManually;
+
+  @override
+  State<_QueueFailureLine> createState() => _QueueFailureLineState();
+}
+
+class _QueueFailureLineState extends State<_QueueFailureLine> {
+  bool _open = false;
+
+  @override
+  void didUpdateWidget(_QueueFailureLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A retry that failed again brings its own words; fold the old ones away.
+    if (_open && widget.record.error != oldWidget.record.error) _open = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final LateArrivalRecord r = widget.record;
+    final DeskWarning reason = DeskWarning.fromText(r.error ?? '');
+    final String why =
+        reason.message.isEmpty ? 'onbekende fout' : reason.message;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                '${r.displayName}, ${r.className} — $why',
+                key: ValueKey<String>('late-queue-failure-${r.id}'),
+                style: text.bodySmall,
+              ),
+            ),
+            if (reason.hasDetail) ...<Widget>[
+              const SizedBox(width: PlinkSpacing.s2),
+              TextButton(
+                key: ValueKey<String>('late-queue-failure-details-${r.id}'),
+                onPressed: () => setState(() => _open = !_open),
+                child: Text(_open ? 'Verberg details' : 'Details'),
+              ),
+            ],
+            const SizedBox(width: PlinkSpacing.s3),
+            // Per line, never in bulk (#460): each press is the operator's
+            // own statement that *this* student is in Smartschool.
+            TextButton(
+              key: ValueKey<String>('late-queue-handled-${r.id}'),
+              onPressed: widget.onHandledManually,
+              child: const Text('Manueel ingevoerd'),
+            ),
+          ],
+        ),
+        if (reason.hasDetail && _open)
+          _RawDetail(
+            reason.detail,
+            textKey: ValueKey<String>('late-queue-failure-detail-${r.id}'),
+          ),
+      ],
+    );
+  }
+}
+
+/// The machine's own words under a **Details** disclosure (#414): set apart,
+/// in a monospace face, and selectable.
+class _RawDetail extends StatelessWidget {
+  const _RawDetail(this.detail, {required this.textKey, this.indent = 0});
+
+  final String detail;
+
+  /// The key the tests read the raw text by.
+  final Key textKey;
+
+  /// How far the pane is indented, to line up with the sentence above it.
+  final double indent;
+
+  @override
+  Widget build(BuildContext context) {
+    final TextTheme text = Theme.of(context).textTheme;
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.only(left: indent, top: PlinkSpacing.s2),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(PlinkSpacing.s2),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest,
+          borderRadius: const BorderRadius.all(
+            Radius.circular(PlinkRadius.base),
+          ),
+        ),
+        // Selectable because the whole point of keeping it is that somebody
+        // pastes it into an issue or a chat.
+        child: SelectableText(
+          detail,
+          key: textKey,
+          style: text.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+            fontFamily: 'monospace',
+          ),
+        ),
       ),
     );
   }
