@@ -3,7 +3,7 @@ description: Arcadia Account Manager — Flutter Windows desktop app.
 publish_to: 'none'
 # A bare X.Y.Z — no `+N` build number (#440). Nothing reads one; see
 # docs/release-process.md → "There is no build number".
-version: 1.5.0
+version: 1.6.0
 
 environment:
   sdk: ^3.6.0
